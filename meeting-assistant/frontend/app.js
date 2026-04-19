@@ -6,6 +6,9 @@
   const opportunitiesEl = document.getElementById("opportunities");
   const topicEl = document.getElementById("topic");
   const topicLabelEl = topicEl.querySelector(".topic-label");
+  const historyListEl = document.getElementById("historyList");
+  const historyModeEl = document.getElementById("historyMode");
+  const backToLiveBtn = document.getElementById("backToLive");
 
   const PALETTE = [
     "#38bdf8", "#a78bfa", "#f472b6", "#fb923c",
@@ -50,7 +53,23 @@
     },
   });
 
-  let currentTopic = "";
+  const MAX_HISTORY = 10;
+  const MAX_LINES_PER_TOPIC = 200;
+  const topics = []; // [{ id, label, startedAt, lines: [{ts,text}], entities, crm }]
+  let currentId = null;
+  let viewingId = null; // null => viewing live (current)
+  let nextId = 1;
+
+  function getTopic(id) {
+    return topics.find((t) => t.id === id) || null;
+  }
+  function currentTopic() { return getTopic(currentId); }
+  function viewedTopic() {
+    return getTopic(viewingId != null ? viewingId : currentId);
+  }
+  function isViewingLive() {
+    return viewingId == null || viewingId === currentId;
+  }
 
   function setStatus(connected) {
     statusEl.textContent = connected ? "Connected" : "Disconnected";
@@ -65,53 +84,16 @@
     }).format(n);
   }
 
-  function setTopicLabel(label) {
-    currentTopic = label || "";
-    topicLabelEl.textContent = label || "Waiting for first topic…";
+  function setTopicLabel(label, viewing) {
+    topicLabelEl.textContent = label
+      ? (viewing ? `${label} (history)` : label)
+      : "Waiting for first topic…";
     topicEl.classList.toggle("active", !!label);
   }
 
-  function clearForTopicShift(newLabel) {
-    setTopicLabel(newLabel);
-
-    transcriptEl.innerHTML = "";
-    const banner = document.createElement("div");
-    banner.className = "topic-shift-banner";
-    banner.textContent = `New topic: ${newLabel}`;
-    transcriptEl.appendChild(banner);
-    transcriptEl.scrollTop = transcriptEl.scrollHeight;
-
-    setField("customer_name", null);
-    setField("contact_name", null);
-    setField("deal_amount", null);
-    setField("deal_stage", null);
-    setField("keywords", []);
-
-    renderRecordsEmpty(accountsEl, "No matches yet");
-    renderRecordsEmpty(opportunitiesEl, "No matches yet");
-
-    stagePie.data.labels = [];
-    stagePie.data.datasets[0].data = [];
-    stagePie.update();
-    amountLine.data.labels = [];
-    amountLine.data.datasets[0].data = [];
-    amountLine.update();
-
+  function flashTopic() {
     topicEl.classList.add("flash");
     setTimeout(() => topicEl.classList.remove("flash"), 800);
-  }
-
-  function appendTranscript(text, ts) {
-    const placeholder = transcriptEl.querySelector(".empty-state");
-    if (placeholder) placeholder.remove();
-    const time = new Date(ts * 1000).toLocaleTimeString();
-    const line = document.createElement("div");
-    line.className = "line";
-    line.innerHTML = `<span class="ts"></span><span class="text"></span>`;
-    line.querySelector(".ts").textContent = time;
-    line.querySelector(".text").textContent = text;
-    transcriptEl.appendChild(line);
-    transcriptEl.scrollTop = transcriptEl.scrollHeight;
   }
 
   function setField(name, value) {
@@ -126,12 +108,13 @@
     }
   }
 
-  function updateEntities(entities) {
-    setField("customer_name", entities.customer_name);
-    setField("contact_name", entities.contact_name);
-    setField("deal_amount", entities.deal_amount);
-    setField("deal_stage", entities.deal_stage);
-    setField("keywords", entities.keywords || []);
+  function renderEntities(entities) {
+    const e = entities || {};
+    setField("customer_name", e.customer_name);
+    setField("contact_name", e.contact_name);
+    setField("deal_amount", e.deal_amount);
+    setField("deal_stage", e.deal_stage);
+    setField("keywords", e.keywords || []);
   }
 
   function renderRecordsEmpty(listEl, message) {
@@ -186,7 +169,8 @@
     }
   }
 
-  function updateCrm(data) {
+  function renderCrm(crm) {
+    const data = crm || {};
     renderAccounts(data.accounts);
     renderOpportunities(data.opportunities);
 
@@ -201,36 +185,203 @@
     amountLine.update();
   }
 
-  function topicMatches(eventTopic) {
-    // Events tagged with a different topic than the one currently shown
-    // are stale and should be ignored to keep the view pinned.
-    if (!eventTopic) return true;
-    if (!currentTopic) return true;
-    return eventTopic === currentTopic;
+  function renderTranscriptLines(lines, headerLabel, headerNote) {
+    transcriptEl.innerHTML = "";
+    if (headerLabel) {
+      const banner = document.createElement("div");
+      banner.className = "topic-shift-banner";
+      banner.textContent = headerNote
+        ? `${headerNote}: ${headerLabel}`
+        : `Topic: ${headerLabel}`;
+      transcriptEl.appendChild(banner);
+    }
+    if (!lines || lines.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "No transcript captured for this topic.";
+      transcriptEl.appendChild(empty);
+    } else {
+      for (const line of lines) {
+        if (line.error) {
+          const el = document.createElement("div");
+          el.className = "line error";
+          el.textContent = line.text;
+          transcriptEl.appendChild(el);
+        } else {
+          appendTranscriptLine(line.text, line.ts);
+        }
+      }
+    }
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  }
+
+  function appendTranscriptLine(text, ts) {
+    const placeholder = transcriptEl.querySelector(".empty-state");
+    if (placeholder) placeholder.remove();
+    const time = new Date(ts * 1000).toLocaleTimeString();
+    const line = document.createElement("div");
+    line.className = "line";
+    line.innerHTML = `<span class="ts"></span><span class="text"></span>`;
+    line.querySelector(".ts").textContent = time;
+    line.querySelector(".text").textContent = text;
+    transcriptEl.appendChild(line);
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  }
+
+  function renderHistoryList() {
+    historyListEl.innerHTML = "";
+    if (topics.length === 0) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "No topics yet";
+      historyListEl.appendChild(li);
+      return;
+    }
+    // newest first
+    const ordered = topics.slice().reverse();
+    for (const t of ordered) {
+      const li = document.createElement("li");
+      const isLive = t.id === currentId;
+      const isActive = (viewingId != null ? t.id === viewingId : isLive);
+      if (isLive) li.classList.add("live");
+      if (isActive) li.classList.add("active");
+      const label = document.createElement("div");
+      label.className = "h-label";
+      label.textContent = t.label || "Untitled topic";
+      const time = document.createElement("div");
+      time.className = "h-time";
+      time.textContent = new Date(t.startedAt * 1000).toLocaleTimeString();
+      li.appendChild(label);
+      li.appendChild(time);
+      li.addEventListener("click", () => viewTopic(t.id));
+      historyListEl.appendChild(li);
+    }
+  }
+
+  function renderViewedTopic() {
+    const t = viewedTopic();
+    if (!t) {
+      setTopicLabel("", false);
+      renderTranscriptLines([], null, null);
+      renderEntities({});
+      renderCrm({});
+      return;
+    }
+    const viewingPast = !isViewingLive();
+    setTopicLabel(t.label, viewingPast);
+    renderTranscriptLines(
+      t.lines,
+      t.label,
+      viewingPast ? "Past topic" : "New topic"
+    );
+    renderEntities(t.entities);
+    renderCrm(t.crm);
+  }
+
+  function updateHistoryModeUi() {
+    const viewingPast = !isViewingLive();
+    historyModeEl.hidden = !viewingPast;
+    document.body.classList.toggle("history-mode", viewingPast);
+  }
+
+  function viewTopic(id) {
+    if (id === currentId) {
+      viewingId = null;
+    } else {
+      viewingId = id;
+    }
+    updateHistoryModeUi();
+    renderViewedTopic();
+    renderHistoryList();
+  }
+
+  function backToLive() {
+    viewingId = null;
+    updateHistoryModeUi();
+    renderViewedTopic();
+    renderHistoryList();
+  }
+
+  backToLiveBtn.addEventListener("click", backToLive);
+
+  function startNewTopic(label, ts) {
+    const topic = {
+      id: nextId++,
+      label: label || "Untitled topic",
+      startedAt: ts || Date.now() / 1000,
+      lines: [],
+      entities: {},
+      crm: {},
+    };
+    topics.push(topic);
+    while (topics.length > MAX_HISTORY) topics.shift();
+    currentId = topic.id;
+    return topic;
   }
 
   function handleEvent(evt) {
     if (evt.type === "topic_shift") {
-      clearForTopicShift(evt.label || "Untitled topic");
+      startNewTopic(evt.label, evt.ts);
+      // A new live topic always pulls the user back to live view.
+      viewingId = null;
+      updateHistoryModeUi();
+      renderViewedTopic();
+      renderHistoryList();
+      flashTopic();
       return;
     }
+
     if (evt.type === "transcript") {
-      if (!topicMatches(evt.topic_label)) return;
-      appendTranscript(evt.text, evt.ts);
-    } else if (evt.type === "entities") {
-      if (!topicMatches(evt.topic_label)) return;
-      updateEntities(evt.entities);
-    } else if (evt.type === "crm") {
-      if (!topicMatches(evt.topic_label)) return;
-      updateCrm(evt.data);
-    } else if (evt.type === "error") {
-      const placeholder = transcriptEl.querySelector(".empty-state");
-      if (placeholder) placeholder.remove();
-      const line = document.createElement("div");
-      line.className = "line error";
-      line.textContent = `[${evt.stage} error] ${evt.message}`;
-      transcriptEl.appendChild(line);
-      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+      const t = currentTopic();
+      if (!t) return;
+      // Drop events whose tag doesn't match the current live topic.
+      if (evt.topic_label && evt.topic_label !== t.label) return;
+      t.lines.push({ ts: evt.ts, text: evt.text });
+      if (t.lines.length > MAX_LINES_PER_TOPIC) {
+        t.lines.splice(0, t.lines.length - MAX_LINES_PER_TOPIC);
+      }
+      if (isViewingLive()) appendTranscriptLine(evt.text, evt.ts);
+      return;
+    }
+
+    if (evt.type === "entities") {
+      const t = currentTopic();
+      if (!t) return;
+      if (evt.topic_label && evt.topic_label !== t.label) return;
+      t.entities = evt.entities || {};
+      if (isViewingLive()) renderEntities(t.entities);
+      return;
+    }
+
+    if (evt.type === "crm") {
+      const t = currentTopic();
+      if (!t) return;
+      if (evt.topic_label && evt.topic_label !== t.label) return;
+      t.crm = evt.data || {};
+      if (isViewingLive()) renderCrm(t.crm);
+      return;
+    }
+
+    if (evt.type === "error") {
+      const t = currentTopic();
+      const errLine = { ts: evt.ts || Date.now() / 1000, text: `[${evt.stage} error] ${evt.message}`, error: true };
+      if (t) {
+        t.lines.push(errLine);
+        if (t.lines.length > MAX_LINES_PER_TOPIC) {
+          t.lines.splice(0, t.lines.length - MAX_LINES_PER_TOPIC);
+        }
+      }
+      // Only render to the transcript panel when the user is on live;
+      // history mode stays read-only for the topic being inspected.
+      if (isViewingLive()) {
+        const placeholder = transcriptEl.querySelector(".empty-state");
+        if (placeholder) placeholder.remove();
+        const line = document.createElement("div");
+        line.className = "line error";
+        line.textContent = errLine.text;
+        transcriptEl.appendChild(line);
+        transcriptEl.scrollTop = transcriptEl.scrollHeight;
+      }
     }
   }
 
@@ -249,6 +400,10 @@
       catch (e) { console.error("Bad message", e, msg.data); }
     };
   }
+
+  // Initial render
+  renderHistoryList();
+  updateHistoryModeUi();
 
   connect();
 })();
