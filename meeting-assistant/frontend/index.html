@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meeting Assistant</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Meeting Assistant</h1>
+    <div id="status" class="status disconnected">Disconnected</div>
+  </header>
+
+  <main>
+    <section class="panel transcript-panel">
+      <h2>Live Transcript</h2>
+      <div id="transcript" class="transcript"></div>
+    </section>
+
+    <section class="panel entities-panel">
+      <h2>Extracted Entities</h2>
+      <dl id="entities" class="entities">
+        <dt>Customer</dt><dd data-field="customer_name">—</dd>
+        <dt>Contact</dt><dd data-field="contact_name">—</dd>
+        <dt>Deal Amount</dt><dd data-field="deal_amount">—</dd>
+        <dt>Stage</dt><dd data-field="deal_stage">—</dd>
+        <dt>Keywords</dt><dd data-field="keywords">—</dd>
+      </dl>
+    </section>
+
+    <section class="panel chart-panel">
+      <h2>Opportunity Stages</h2>
+      <canvas id="stagePie"></canvas>
+    </section>
+
+    <section class="panel chart-panel">
+      <h2>Deal Amounts Over Time</h2>
+      <canvas id="amountLine"></canvas>
+    </section>
+
+    <section class="panel records-panel">
+      <h2>Salesforce Records</h2>
+      <div class="records-grid">
+        <div>
+          <h3>Accounts</h3>
+          <ul id="accounts" class="record-list"><li class="empty">No matches yet</li></ul>
+        </div>
+        <div>
+          <h3>Opportunities</h3>
+          <ul id="opportunities" class="record-list"><li class="empty">No matches yet</li></ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

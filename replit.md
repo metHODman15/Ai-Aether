@@ -25,3 +25,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+
+## Standalone Projects
+
+- `meeting-assistant/` — Python real-time meeting assistant (FastAPI + Whisper + Claude + Salesforce). Runs locally on the user's machine, not part of the pnpm workspace. See `meeting-assistant/README.md` for setup.
