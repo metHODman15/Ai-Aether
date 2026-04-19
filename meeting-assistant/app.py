@@ -1,8 +1,9 @@
 """Real-time meeting assistant entry point.
 
-Captures microphone audio, transcribes it with Whisper, extracts CRM
-entities with Claude, queries Salesforce, and broadcasts everything to
-a local browser dashboard via WebSockets.
+Captures microphone audio, transcribes it with Whisper, uses Claude
+purely to detect topic shifts, extracts CRM entities with OpenAI,
+queries Salesforce, and broadcasts everything to a local browser
+dashboard via WebSockets.
 """
 from __future__ import annotations
 
@@ -21,9 +22,11 @@ import uvicorn
 
 from backend.audio import microphone_chunks
 from backend.config import Config, ConfigError
+from backend.context import ContextManager
 from backend.entities import EntityExtractor
 from backend.hub import ConnectionHub
 from backend.salesforce_client import SalesforceClient
+from backend.topic_state import TopicState
 from backend.transcribe import Transcriber
 
 logging.basicConfig(
@@ -39,11 +42,13 @@ FRONTEND_DIR = ROOT / "frontend"
 async def pipeline_loop(
     config: Config,
     transcriber: Transcriber,
+    context_mgr: ContextManager,
     extractor: EntityExtractor,
     sf_client: SalesforceClient,
     hub: ConnectionHub,
 ) -> None:
-    """Continuously capture, transcribe, extract, query, and broadcast."""
+    """Continuously capture, transcribe, evaluate context, query, broadcast."""
+    topic = TopicState()
     try:
         async for chunk in microphone_chunks(
             sample_rate=config.audio_sample_rate,
@@ -60,25 +65,79 @@ async def pipeline_loop(
             if not transcript:
                 continue
 
-            await hub.broadcast({"type": "transcript", "ts": ts, "text": transcript})
-
+            # Step 1: Claude decides whether the topic shifted.
             try:
-                entities = await extractor.extract(transcript)
+                decision = await context_mgr.evaluate(
+                    topic.label, topic.summary, transcript
+                )
+            except Exception as exc:
+                logger.exception("Context evaluation failed: %s", exc)
+                await hub.broadcast({"type": "error", "stage": "context", "message": str(exc)})
+                decision = None
+
+            shifted = False
+            if decision is not None:
+                if decision["shift"] or not topic.label:
+                    topic.reset(
+                        label=decision["topic_label"] or "Untitled topic",
+                        summary=decision["summary"],
+                        started_at=ts,
+                    )
+                    shifted = True
+                else:
+                    topic.summary = decision["summary"] or topic.summary
+
+            if shifted:
+                await hub.broadcast({
+                    "type": "topic_shift",
+                    "ts": ts,
+                    "label": topic.label,
+                    "summary": topic.summary,
+                })
+
+            await hub.broadcast({
+                "type": "transcript",
+                "ts": ts,
+                "text": transcript,
+                "topic_label": topic.label,
+            })
+
+            # Step 2: Extract entities for Salesforce lookup.
+            try:
+                new_entities = await extractor.extract(transcript)
             except Exception as exc:
                 logger.exception("Entity extraction failed: %s", exc)
                 await hub.broadcast({"type": "error", "stage": "extract", "message": str(exc)})
                 continue
 
-            await hub.broadcast({"type": "entities", "ts": ts, "entities": entities})
+            entities_changed = topic.merge_entities(new_entities)
+            should_query = shifted or entities_changed
 
+            await hub.broadcast({
+                "type": "entities",
+                "ts": ts,
+                "entities": dict(topic.entities),
+                "topic_label": topic.label,
+            })
+
+            if not should_query:
+                continue
+
+            # Step 3: Query Salesforce only when the topic is fresh or
+            # entities changed within the current topic.
             try:
-                crm = await sf_client.query_for_entities(entities)
+                crm = await sf_client.query_for_entities(topic.entities)
             except Exception as exc:
                 logger.exception("Salesforce query failed: %s", exc)
                 await hub.broadcast({"type": "error", "stage": "salesforce", "message": str(exc)})
                 continue
 
-            await hub.broadcast({"type": "crm", "ts": ts, "data": crm})
+            await hub.broadcast({
+                "type": "crm",
+                "ts": ts,
+                "data": crm,
+                "topic_label": topic.label,
+            })
     except asyncio.CancelledError:
         logger.info("Pipeline stopped")
         raise
@@ -90,7 +149,8 @@ async def pipeline_loop(
 def build_app(config: Config) -> FastAPI:
     hub = ConnectionHub()
     transcriber = Transcriber(api_key=config.openai_api_key, sample_rate=config.audio_sample_rate)
-    extractor = EntityExtractor(api_key=config.anthropic_api_key)
+    context_mgr = ContextManager(api_key=config.anthropic_api_key)
+    extractor = EntityExtractor(api_key=config.openai_api_key)
     sf_client = SalesforceClient(
         username=config.sf_username,
         password=config.sf_password,
@@ -101,7 +161,7 @@ def build_app(config: Config) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         task = asyncio.create_task(
-            pipeline_loop(config, transcriber, extractor, sf_client, hub)
+            pipeline_loop(config, transcriber, context_mgr, extractor, sf_client, hub)
         )
         try:
             yield

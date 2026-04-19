@@ -1,4 +1,8 @@
-"""Extract CRM-relevant entities from transcript text using Claude."""
+"""Extract CRM-relevant entities from transcript text using OpenAI.
+
+Claude is reserved for context management (see backend/context.py),
+so entity extraction runs against an OpenAI chat model in JSON mode.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +11,7 @@ import logging
 import re
 from typing import TypedDict
 
-from anthropic import Anthropic, APIError
+from openai import OpenAI, OpenAIError
 
 logger = logging.getLogger(__name__)
 
@@ -36,64 +40,57 @@ Return ONLY a single JSON object with these fields (use null for unknown):
   "keywords": string[]              // Up to 5 short search keywords
 }
 
-If no relevant CRM info is present, return all-null fields and an empty keywords list.
-Never include explanations, markdown, or extra text — only the JSON object."""
+If no relevant CRM info is present, return all-null fields and an empty keywords list."""
+
+
+def _empty() -> Entities:
+    return Entities(
+        customer_name=None,
+        contact_name=None,
+        deal_amount=None,
+        deal_stage=None,
+        keywords=[],
+    )
 
 
 class EntityExtractor:
-    def __init__(self, api_key: str, model: str = "claude-3-5-haiku-latest"):
-        self._client = Anthropic(api_key=api_key)
+    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
+        self._client = OpenAI(api_key=api_key)
         self._model = model
 
     async def extract(self, transcript: str) -> Entities:
         if not transcript.strip():
-            return Entities(
-                customer_name=None,
-                contact_name=None,
-                deal_amount=None,
-                deal_stage=None,
-                keywords=[],
-            )
+            return _empty()
         return await asyncio.to_thread(self._extract_sync, transcript)
 
     def _extract_sync(self, transcript: str) -> Entities:
         try:
-            msg = self._client.messages.create(
+            resp = self._client.chat.completions.create(
                 model=self._model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": transcript},
+                ],
+                response_format={"type": "json_object"},
                 max_tokens=400,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": transcript}],
+                temperature=0.0,
             )
-            raw = "".join(
-                block.text for block in msg.content if getattr(block, "type", "") == "text"
-            ).strip()
+            raw = (resp.choices[0].message.content or "").strip()
             return _parse_json(raw)
-        except APIError as exc:
-            logger.warning("Claude API error: %s", exc)
-            return Entities(
-                customer_name=None,
-                contact_name=None,
-                deal_amount=None,
-                deal_stage=None,
-                keywords=[],
-            )
+        except OpenAIError as exc:
+            logger.warning("OpenAI entity extraction error: %s", exc)
+            return _empty()
 
 
 def _parse_json(raw: str) -> Entities:
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if not match:
-        return Entities(
-            customer_name=None, contact_name=None, deal_amount=None,
-            deal_stage=None, keywords=[],
-        )
+        return _empty()
     try:
         data = json.loads(match.group(0))
     except json.JSONDecodeError as exc:
-        logger.warning("Could not parse Claude JSON output: %s", exc)
-        return Entities(
-            customer_name=None, contact_name=None, deal_amount=None,
-            deal_stage=None, keywords=[],
-        )
+        logger.warning("Could not parse entity JSON output: %s", exc)
+        return _empty()
 
     amount = data.get("deal_amount")
     if isinstance(amount, str):

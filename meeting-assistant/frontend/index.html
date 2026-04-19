@@ -9,14 +9,22 @@
 </head>
 <body>
   <header>
-    <h1>Meeting Assistant</h1>
+    <div class="header-left">
+      <h1>Meeting Assistant</h1>
+      <div id="topic" class="topic-badge">
+        <span class="topic-dot"></span>
+        <span class="topic-label">Waiting for first topic…</span>
+      </div>
+    </div>
     <div id="status" class="status disconnected">Disconnected</div>
   </header>
 
   <main>
     <section class="panel transcript-panel">
       <h2>Live Transcript</h2>
-      <div id="transcript" class="transcript"></div>
+      <div id="transcript" class="transcript">
+        <div class="empty-state">Listening…</div>
+      </div>
     </section>
 
     <section class="panel entities-panel">
