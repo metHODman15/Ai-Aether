@@ -48,6 +48,48 @@ brew install portaudio libsndfile
 
 ## Setup
 
+### One-click setup (recommended)
+
+Run a single script and follow the prompts — it installs system audio libraries
+(where possible), creates a virtual environment, installs all Python
+dependencies, and walks you through filling in every credential.
+
+**macOS / Linux**
+
+```bash
+git clone <your-fork-url>
+cd meeting-assistant
+bash setup.sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+git clone <your-fork-url>
+cd meeting-assistant
+.\setup.ps1
+```
+
+> **Windows note:** If you see an execution-policy error, run this once in an
+> Administrator PowerShell window first:
+> `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
+
+After the script finishes, start the app with:
+
+```bash
+# macOS / Linux
+source .venv/bin/activate
+python app.py
+
+# Windows
+.\.venv\Scripts\Activate.ps1
+python app.py
+```
+
+---
+
+### Manual setup
+
 ```bash
 git clone <your-fork-url>
 cd meeting-assistant
