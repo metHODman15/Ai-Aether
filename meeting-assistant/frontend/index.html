@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Meeting Assistant</title>
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -17,6 +17,7 @@
       </div>
     </div>
     <div class="header-right">
+      <button id="demoBtn" class="demo-btn" type="button">Try Demo</button>
       <button id="uploadBtn" class="upload-btn" type="button">Upload Minutes</button>
       <input id="uploadInput" type="file" hidden accept=".pdf,.docx,.txt" />
       <label class="sensitivity">
@@ -42,6 +43,16 @@
       <div id="status" class="status disconnected">Disconnected</div>
     </div>
   </header>
+
+  <div id="demoBanner" class="demo-banner">
+    <div class="demo-banner-inner">
+      <div class="demo-banner-text">
+        <strong>No backend connected.</strong>
+        Try Demo Mode to explore all features — live transcript, topic shifts, CRM charts, and document analysis.
+      </div>
+      <button id="demoOverlayBtn" class="demo-banner-btn" type="button">&#9654; Start Demo</button>
+    </div>
+  </div>
 
   <main id="liveView">
     <section class="panel history-panel">
@@ -146,6 +157,6 @@
     <div id="docUnits" class="doc-units"></div>
   </div>
 
-  <script src="/app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
