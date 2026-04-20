@@ -102,29 +102,46 @@ def _atomic_replace(src: str, dst: str) -> None:
     related to concurrent readers.
 
     On Windows, os.replace can raise PermissionError when another process
-    holds dst open (e.g. antivirus, log tailer).  We retry a small number of
-    times with a short back-off so transient locks do not corrupt the settings
-    file.  If all retries are exhausted the final PermissionError propagates to
-    the caller.
+    holds dst open (e.g. antivirus, log tailer).  We use a backup-swap
+    sequence to guarantee the original content is never lost:
+
+      1. Rename the existing dst to dst.bak  (preserves the last-good state).
+         Skipped if dst does not yet exist (first save).
+      2. Rename src to dst                   (promotes the new content).
+      3. Delete dst.bak                      (cleanup on success).
+
+    If step 2 fails we restore dst from dst.bak so the original file is
+    always recoverable.  The PermissionError from step 2 is then re-raised
+    so the caller can decide how to handle it.
     """
     if sys.platform != "win32":
         os.replace(src, dst)
         return
 
-    _WIN_RETRIES = 5
-    _WIN_RETRY_DELAY = 0.05  # seconds
+    dst_bak = dst + ".bak"
+    has_bak = False
 
-    last_err: PermissionError | None = None
-    for attempt in range(_WIN_RETRIES):
+    try:
+        os.replace(dst, dst_bak)
+        has_bak = True
+    except FileNotFoundError:
+        pass
+
+    try:
+        os.replace(src, dst)
+    except Exception:
+        if has_bak:
+            try:
+                os.replace(dst_bak, dst)
+            except OSError:
+                pass
+        raise
+
+    if has_bak:
         try:
-            os.replace(src, dst)
-            return
-        except PermissionError as exc:
-            last_err = exc
-            if attempt < _WIN_RETRIES - 1:
-                time.sleep(_WIN_RETRY_DELAY)
-    assert last_err is not None
-    raise last_err
+            os.unlink(dst_bak)
+        except OSError:
+            pass
 
 
 def _save_persisted_settings(data: dict) -> None:
