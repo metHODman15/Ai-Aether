@@ -33,7 +33,7 @@ from backend.hub import ConnectionHub
 from backend.salesforce_client import SalesforceClient
 from backend.store import MeetingStore
 from backend.topic_state import TopicState
-from backend.transcribe import Transcriber
+from backend.transcribe import Transcriber, create_transcriber
 
 logging.basicConfig(
     level=logging.INFO,
@@ -378,7 +378,14 @@ def build_app(config: Config) -> FastAPI:
         audio_chunk_seconds=persisted["audio_chunk_seconds"],
         audio_sample_rate=persisted["audio_sample_rate"],
     )
-    transcriber = Transcriber(api_key=config.openai_api_key, sample_rate=settings.audio_sample_rate)
+    transcriber = create_transcriber(
+        sample_rate=settings.audio_sample_rate,
+        backend=config.whisper_backend,
+        openai_api_key=config.openai_api_key,
+        local_model_size=config.local_whisper_model,
+        local_device=config.local_whisper_device,
+        local_compute_type=config.local_whisper_compute_type,
+    )
     context_mgr = ContextManager(api_key=config.anthropic_api_key)
     extractor = EntityExtractor(api_key=config.openai_api_key)
     sf_client = SalesforceClient(

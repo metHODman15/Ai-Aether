@@ -11,3 +11,8 @@ websockets==13.1
 pdfplumber==0.11.4
 python-docx==1.1.2
 python-multipart==0.0.17
+
+# Optional — only required when WHISPER_BACKEND=local
+# faster-whisper runs Whisper entirely on-device (no OpenAI calls for transcription).
+# Install with:  pip install faster-whisper
+# faster-whisper>=1.0.3

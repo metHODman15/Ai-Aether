@@ -35,11 +35,27 @@ class Config:
     port: int
     audio_chunk_seconds: float
     audio_sample_rate: int
+    whisper_backend: str
+    local_whisper_model: str
+    local_whisper_device: str
+    local_whisper_compute_type: str
 
     @classmethod
     def from_env(cls) -> "Config":
+        whisper_backend = _optional("WHISPER_BACKEND", "openai").lower().strip()
+        _VALID_BACKENDS = ("openai", "local")
+        if whisper_backend not in _VALID_BACKENDS:
+            raise ConfigError(
+                f"WHISPER_BACKEND='{whisper_backend}' is not valid. "
+                f"Choose one of: {', '.join(_VALID_BACKENDS)}."
+            )
+
+        # OPENAI_API_KEY is always required: entity extraction uses it regardless
+        # of which transcription backend is selected.
+        openai_api_key = _require("OPENAI_API_KEY")
+
         return cls(
-            openai_api_key=_require("OPENAI_API_KEY"),
+            openai_api_key=openai_api_key,
             anthropic_api_key=_require("ANTHROPIC_API_KEY"),
             sf_username=_require("SF_USERNAME"),
             sf_password=_require("SF_PASSWORD"),
@@ -49,4 +65,8 @@ class Config:
             port=int(_optional("PORT", "8000")),
             audio_chunk_seconds=float(_optional("AUDIO_CHUNK_SECONDS", "5")),
             audio_sample_rate=int(_optional("AUDIO_SAMPLE_RATE", "16000")),
+            whisper_backend=whisper_backend,
+            local_whisper_model=_optional("LOCAL_WHISPER_MODEL", "base"),
+            local_whisper_device=_optional("LOCAL_WHISPER_DEVICE", "cpu"),
+            local_whisper_compute_type=_optional("LOCAL_WHISPER_COMPUTE_TYPE", "int8"),
         )
