@@ -33,7 +33,13 @@ def parse_document(filename: str, content: bytes) -> list[str]:
 
 
 def _split_paragraphs(text: str) -> list[str]:
-    """Split *text* on blank lines; return trimmed, non-empty paragraphs."""
+    """Split *text* on blank lines; return trimmed, non-empty paragraphs.
+
+    Normalises Windows (CRLF) and legacy Mac (CR) line endings before
+    splitting so that documents created on any platform are segmented
+    correctly.
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     units = []
     for block in text.split("\n\n"):
         stripped = block.strip()

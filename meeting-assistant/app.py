@@ -558,7 +558,13 @@ def build_app(config: Config) -> FastAPI:
                 crm = await sf_client.query_for_entities(entities)
             except Exception as exc:
                 logger.warning("Salesforce query failed for unit %d: %s", idx, exc)
-                crm = {}
+                await hub.broadcast({
+                    "type": "document_unit_error",
+                    "unit_index": idx,
+                    "total_units": total,
+                    "message": f"Salesforce query failed: {exc}",
+                })
+                continue
 
             await hub.broadcast({
                 "type": "document_unit",
