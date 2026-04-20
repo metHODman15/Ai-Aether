@@ -95,13 +95,45 @@ def _load_persisted_settings(config_chunk_seconds: float, config_sample_rate: in
     }
 
 
+def _atomic_replace(src: str, dst: str) -> None:
+    """Replace dst with src, as safely as the platform allows.
+
+    On POSIX, os.replace is a true atomic rename(2) with no failure modes
+    related to concurrent readers.
+
+    On Windows, os.replace can raise PermissionError when another process
+    holds dst open (e.g. antivirus, log tailer).  We retry a small number of
+    times with a short back-off so transient locks do not corrupt the settings
+    file.  If all retries are exhausted the final PermissionError propagates to
+    the caller.
+    """
+    if sys.platform != "win32":
+        os.replace(src, dst)
+        return
+
+    _WIN_RETRIES = 5
+    _WIN_RETRY_DELAY = 0.05  # seconds
+
+    last_err: PermissionError | None = None
+    for attempt in range(_WIN_RETRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as exc:
+            last_err = exc
+            if attempt < _WIN_RETRIES - 1:
+                time.sleep(_WIN_RETRY_DELAY)
+    assert last_err is not None
+    raise last_err
+
+
 def _save_persisted_settings(data: dict) -> None:
     """Write user settings to disk so they survive restarts.
 
     Uses an atomic write: the JSON is written to a temporary file in the same
-    directory, then renamed over the real file.  Because rename(2) is atomic on
-    POSIX systems, a crash or full-disk error mid-write can never leave
-    user_settings.json in a truncated or empty state.
+    directory, then renamed over the real file via _atomic_replace.  A crash
+    or full-disk error mid-write can never leave user_settings.json in a
+    truncated or empty state.
     """
     try:
         dir_ = SETTINGS_FILE.parent
@@ -110,7 +142,7 @@ def _save_persisted_settings(data: dict) -> None:
         try:
             with os.fdopen(fd, "w") as fh:
                 json.dump(data, fh)
-            os.replace(tmp_path, SETTINGS_FILE)
+            _atomic_replace(tmp_path, str(SETTINGS_FILE))
         except Exception:
             try:
                 os.unlink(tmp_path)
