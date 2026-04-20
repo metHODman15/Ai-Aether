@@ -56,7 +56,9 @@ def _parse_pdf(content: bytes) -> list[str]:
         for page in pdf.pages:
             text = page.extract_text() or ""
             units.extend(_split_paragraphs(text))
-    return units or ["(no readable text found in PDF)"]
+    if not units:
+        raise ValueError("No readable text found in PDF. The file may be scanned, image-only, or empty.")
+    return units
 
 
 def _parse_docx(content: bytes) -> list[str]:
@@ -84,7 +86,9 @@ def _parse_docx(content: bytes) -> list[str]:
     if current_block:
         units.append("\n".join(current_block))
 
-    return units or ["(no readable text found in DOCX)"]
+    if not units:
+        raise ValueError("No readable text found in DOCX. The file may be empty or contain only images/tables.")
+    return units
 
 
 def _parse_txt(content: bytes) -> list[str]:
@@ -92,4 +96,7 @@ def _parse_txt(content: bytes) -> list[str]:
         text = content.decode("utf-8", errors="replace")
     except Exception:
         text = ""
-    return _split_paragraphs(text) or ["(empty text file)"]
+    units = _split_paragraphs(text)
+    if not units:
+        raise ValueError("The text file appears to be empty or contains no readable content.")
+    return units
