@@ -1136,6 +1136,12 @@
   // ── WebSocket event handler ───────────────────────────────────────────────
 
   function handleEvent(evt) {
+    if (evt.type === "document_error") {
+      showDocError(evt.message || "Document processing failed");
+      docProgressLabelEl.textContent = "Failed";
+      return;
+    }
+
     if (evt.type === "document_start") {
       docTitleEl.textContent = evt.filename || "Document";
       docProgressLabelEl.textContent = `0 of ${evt.total_units} units`;
