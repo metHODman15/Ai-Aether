@@ -68,6 +68,8 @@ def _load_app_module():
 _app = _load_app_module()
 _atomic_replace = _app._atomic_replace
 _save_persisted_settings = _app._save_persisted_settings
+_cleanup_stale_temp_files = _app._cleanup_stale_temp_files
+_STALE_TMP_AGE_SECONDS = _app._STALE_TMP_AGE_SECONDS
 
 
 @pytest.fixture()
@@ -381,3 +383,65 @@ class TestSavePersistedSettingsFailure:
             _save_persisted_settings({"sensitivity": "high"})
 
         assert json.loads(settings_path.read_text()) == original
+
+
+# ---------------------------------------------------------------------------
+# _cleanup_stale_temp_files
+# ---------------------------------------------------------------------------
+
+import time as _time
+
+
+class TestCleanupStaleTempFiles:
+    """Tests for _cleanup_stale_temp_files() startup cleanup logic."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_settings_dir(self, tmp_path, monkeypatch):
+        """Point SETTINGS_FILE into tmp_path so cleanup scans there."""
+        monkeypatch.setattr(_app, "SETTINGS_FILE", tmp_path / "user_settings.json")
+        self.settings_dir = tmp_path
+
+    def _make_tmp_file(self, name: str, age_seconds: float) -> Path:
+        """Create a .settings_tmp_* file and backdate its mtime."""
+        path = self.settings_dir / name
+        path.write_text("partial")
+        mtime = _time.time() - age_seconds
+        os.utime(path, (mtime, mtime))
+        return path
+
+    def test_stale_file_is_deleted(self):
+        """A temp file older than the threshold must be removed."""
+        stale = self._make_tmp_file(".settings_tmp_abc123", _STALE_TMP_AGE_SECONDS + 60)
+        _cleanup_stale_temp_files()
+        assert not stale.exists(), "Stale temp file should have been deleted"
+
+    def test_multiple_stale_files_all_deleted(self):
+        """All stale temp files are removed, not just the first one."""
+        stale1 = self._make_tmp_file(".settings_tmp_aaa", _STALE_TMP_AGE_SECONDS + 120)
+        stale2 = self._make_tmp_file(".settings_tmp_bbb", _STALE_TMP_AGE_SECONDS + 3600)
+        _cleanup_stale_temp_files()
+        assert not stale1.exists(), "First stale temp file should be deleted"
+        assert not stale2.exists(), "Second stale temp file should be deleted"
+
+    def test_recent_file_is_kept(self):
+        """A temp file within the threshold must NOT be deleted."""
+        recent = self._make_tmp_file(".settings_tmp_xyz789", _STALE_TMP_AGE_SECONDS - 60)
+        _cleanup_stale_temp_files()
+        assert recent.exists(), "Recent temp file should be preserved"
+
+    def test_stale_deleted_but_recent_kept(self):
+        """Only stale files are removed; recent ones survive."""
+        stale = self._make_tmp_file(".settings_tmp_old", _STALE_TMP_AGE_SECONDS + 300)
+        recent = self._make_tmp_file(".settings_tmp_new", _STALE_TMP_AGE_SECONDS - 300)
+        _cleanup_stale_temp_files()
+        assert not stale.exists(), "Stale temp file should be deleted"
+        assert recent.exists(), "Recent temp file should be preserved"
+
+    def test_unrelated_files_untouched(self):
+        """Files not matching .settings_tmp_* are never removed."""
+        other = self.settings_dir / "user_settings.json"
+        other.write_text('{"sensitivity":"low"}')
+        mtime = _time.time() - (_STALE_TMP_AGE_SECONDS + 7200)
+        os.utime(other, (mtime, mtime))
+        _cleanup_stale_temp_files()
+        assert other.exists(), "Non-temp files must not be touched"
