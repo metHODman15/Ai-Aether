@@ -324,6 +324,39 @@
     return false;
   }
 
+  function snippetAround(text, query) {
+    const MAX = 80;
+    const idx = text.toLowerCase().indexOf(query.toLowerCase());
+    if (idx === -1) return null;
+    const matchLen = query.length;
+    const half = Math.floor((MAX - matchLen) / 2);
+    let start = Math.max(0, idx - half);
+    let end = Math.min(text.length, start + MAX);
+    if (end - start < MAX) start = Math.max(0, end - MAX);
+    const prefix = start > 0 ? "\u2026" : "";
+    const suffix = end < text.length ? "\u2026" : "";
+    return prefix + text.slice(start, end) + suffix;
+  }
+
+  function getMatchSnippet(t, q) {
+    if (!q) return null;
+    const needle = q.toLowerCase();
+    const e = t.entities || {};
+    const entityFields = [
+      e.customer_name, e.contact_name, e.deal_stage,
+      e.deal_amount != null ? String(e.deal_amount) : null,
+    ].filter(Boolean).map(String);
+    if (Array.isArray(e.keywords)) entityFields.push(...e.keywords.filter(Boolean).map(String));
+    for (const val of entityFields) {
+      if (val.toLowerCase().includes(needle)) return snippetAround(val, q);
+    }
+    for (const line of t.lines || []) {
+      const text = line.text || "";
+      if (text.toLowerCase().includes(needle)) return snippetAround(text, q);
+    }
+    return null;
+  }
+
   function renderTranscriptLines(lines, headerLabel, headerNote) {
     transcriptEl.innerHTML = "";
     if (headerLabel) {
@@ -414,7 +447,8 @@
       const label = document.createElement("div");
       label.className = "h-label";
       const labelText = t.label || "Untitled topic";
-      if (searchQuery && labelText.toLowerCase().includes(searchQuery.toLowerCase())) {
+      const labelMatches = searchQuery && labelText.toLowerCase().includes(searchQuery.toLowerCase());
+      if (labelMatches) {
         label.innerHTML = highlightHtml(labelText, searchQuery);
       } else {
         label.textContent = labelText;
@@ -425,6 +459,20 @@
         tag.title = "Loaded from server history";
         tag.textContent = "saved";
         label.appendChild(tag);
+      }
+      if (searchQuery && !labelMatches) {
+        const snippet = getMatchSnippet(t, searchQuery);
+        if (snippet) {
+          const snippetEl = document.createElement("div");
+          snippetEl.className = "h-snippet";
+          snippetEl.innerHTML = highlightHtml(snippet, searchQuery);
+          li.appendChild(label);
+          li.appendChild(snippetEl);
+        } else {
+          li.appendChild(label);
+        }
+      } else {
+        li.appendChild(label);
       }
       const time = document.createElement("div");
       time.className = "h-time";
@@ -444,7 +492,7 @@
         delBtn.addEventListener("click", (e) => { e.stopPropagation(); deleteTopic(t.id); });
         li.appendChild(delBtn);
       }
-      li.appendChild(label); li.appendChild(time);
+      li.appendChild(time);
       li.addEventListener("click", () => _loadAndViewTopic(t.id));
       historyListEl.appendChild(li);
     }

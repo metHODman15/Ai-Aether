@@ -393,6 +393,19 @@ mark.search-hit-current {
 .history-list li.h-session-divider:hover { border-color: transparent; border-top-color: rgba(148,163,184,0.2); }
 .history-list li.h-session-divider--first { border-top: none; padding-top: 2px; }
 .history-list .h-label { font-weight: 600; word-break: break-word; padding-right: 20px; }
+.history-list .h-snippet {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 20px;
+}
+.history-list .h-snippet mark.search-hit {
+  font-style: normal;
+}
 .history-list .h-time { color: var(--muted); font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .history-list .h-delete-btn {
   position: absolute;
