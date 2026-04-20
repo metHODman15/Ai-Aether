@@ -528,9 +528,19 @@ def build_app(config: Config) -> FastAPI:
         try:
             units = parse_document(filename, content)
         except (ValueError, RuntimeError) as exc:
+            await hub.broadcast({
+                "type": "document_error",
+                "filename": filename,
+                "message": str(exc),
+            })
             raise HTTPException(status_code=422, detail=str(exc))
         except Exception as exc:
             logger.exception("Document parsing failed: %s", exc)
+            await hub.broadcast({
+                "type": "document_error",
+                "filename": filename,
+                "message": f"Parsing failed: {exc}",
+            })
             raise HTTPException(status_code=500, detail=f"Parsing failed: {exc}")
 
         total = len(units)
