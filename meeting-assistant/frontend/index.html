@@ -31,6 +31,14 @@
         <span class="sensitivity-label">Audio chunk (seconds)</span>
         <input id="audioChunkSeconds" type="number" min="1" max="30" step="1" value="5" />
       </label>
+      <label class="sensitivity">
+        <span class="sensitivity-label">Sample rate (Hz)</span>
+        <select id="audioSampleRate">
+          <option value="8000">8,000 Hz</option>
+          <option value="16000" selected>16,000 Hz</option>
+          <option value="44100">44,100 Hz</option>
+        </select>
+      </label>
       <div id="status" class="status disconnected">Disconnected</div>
     </div>
   </header>

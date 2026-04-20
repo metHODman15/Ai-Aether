@@ -47,12 +47,16 @@ SETTINGS_FILE = ROOT / "user_settings.json"
 AUDIO_CHUNK_MIN = 1.0
 AUDIO_CHUNK_MAX = 30.0
 
+AUDIO_SAMPLE_RATE_OPTIONS = [8000, 16000, 44100]
 
-def _load_persisted_settings(config_chunk_seconds: float) -> dict:
+
+def _load_persisted_settings(config_chunk_seconds: float, config_sample_rate: int) -> dict:
     """Return user settings stored on disk, filling in defaults for any missing keys.
 
     `config_chunk_seconds` is the value from the environment / Config dataclass and
     is used as the fallback when no persisted value exists yet.
+    `config_sample_rate` is the audio sample rate from the environment and is used
+    as the fallback when no persisted value exists yet.
     """
     data: dict = {}
     try:
@@ -74,7 +78,21 @@ def _load_persisted_settings(config_chunk_seconds: float) -> dict:
     else:
         audio_chunk_seconds = config_chunk_seconds
 
-    return {"sensitivity": sensitivity, "audio_chunk_seconds": audio_chunk_seconds}
+    if "audio_sample_rate" in data:
+        try:
+            audio_sample_rate = int(data["audio_sample_rate"])
+            if audio_sample_rate not in AUDIO_SAMPLE_RATE_OPTIONS:
+                audio_sample_rate = config_sample_rate
+        except (TypeError, ValueError):
+            audio_sample_rate = config_sample_rate
+    else:
+        audio_sample_rate = config_sample_rate
+
+    return {
+        "sensitivity": sensitivity,
+        "audio_chunk_seconds": audio_chunk_seconds,
+        "audio_sample_rate": audio_sample_rate,
+    }
 
 
 def _save_persisted_settings(data: dict) -> None:
@@ -106,9 +124,15 @@ def _save_persisted_settings(data: dict) -> None:
 class Settings:
     """Mutable runtime settings adjustable from the dashboard."""
 
-    def __init__(self, sensitivity: str = DEFAULT_SENSITIVITY, audio_chunk_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        sensitivity: str = DEFAULT_SENSITIVITY,
+        audio_chunk_seconds: float = 5.0,
+        audio_sample_rate: int = 16000,
+    ) -> None:
         self.sensitivity = sensitivity
         self.audio_chunk_seconds = audio_chunk_seconds
+        self.audio_sample_rate = audio_sample_rate
 
 
 async def pipeline_loop(
@@ -123,98 +147,100 @@ async def pipeline_loop(
     """Continuously capture, transcribe, evaluate context, query, broadcast."""
     topic = TopicState()
     try:
-        async for chunk in microphone_chunks(
-            sample_rate=config.audio_sample_rate,
-            chunk_seconds=settings.audio_chunk_seconds,
-            get_chunk_seconds=lambda: settings.audio_chunk_seconds,
-        ):
-            ts = time.time()
-            try:
-                transcript = await transcriber.transcribe(chunk)
-            except Exception as exc:
-                logger.exception("Transcription failed: %s", exc)
-                await hub.broadcast({"type": "error", "stage": "transcribe", "message": str(exc)})
-                continue
+        while True:
+            async for chunk in microphone_chunks(
+                sample_rate=settings.audio_sample_rate,
+                chunk_seconds=settings.audio_chunk_seconds,
+                get_chunk_seconds=lambda: settings.audio_chunk_seconds,
+                get_sample_rate=lambda: settings.audio_sample_rate,
+            ):
+                ts = time.time()
+                try:
+                    transcript = await transcriber.transcribe(chunk)
+                except Exception as exc:
+                    logger.exception("Transcription failed: %s", exc)
+                    await hub.broadcast({"type": "error", "stage": "transcribe", "message": str(exc)})
+                    continue
 
-            if not transcript:
-                continue
+                if not transcript:
+                    continue
 
-            # Step 1: Claude decides whether the topic shifted.
-            try:
-                decision = await context_mgr.evaluate(
-                    topic.label,
-                    topic.summary,
-                    transcript,
-                    sensitivity=settings.sensitivity,
-                )
-            except Exception as exc:
-                logger.exception("Context evaluation failed: %s", exc)
-                await hub.broadcast({"type": "error", "stage": "context", "message": str(exc)})
-                decision = None
-
-            shifted = False
-            if decision is not None:
-                if decision["shift"] or not topic.label:
-                    topic.reset(
-                        label=decision["topic_label"] or "Untitled topic",
-                        summary=decision["summary"],
-                        started_at=ts,
+                # Step 1: Claude decides whether the topic shifted.
+                try:
+                    decision = await context_mgr.evaluate(
+                        topic.label,
+                        topic.summary,
+                        transcript,
+                        sensitivity=settings.sensitivity,
                     )
-                    shifted = True
-                else:
-                    topic.summary = decision["summary"] or topic.summary
+                except Exception as exc:
+                    logger.exception("Context evaluation failed: %s", exc)
+                    await hub.broadcast({"type": "error", "stage": "context", "message": str(exc)})
+                    decision = None
 
-            if shifted:
+                shifted = False
+                if decision is not None:
+                    if decision["shift"] or not topic.label:
+                        topic.reset(
+                            label=decision["topic_label"] or "Untitled topic",
+                            summary=decision["summary"],
+                            started_at=ts,
+                        )
+                        shifted = True
+                    else:
+                        topic.summary = decision["summary"] or topic.summary
+
+                if shifted:
+                    await hub.broadcast({
+                        "type": "topic_shift",
+                        "ts": ts,
+                        "label": topic.label,
+                        "summary": topic.summary,
+                    })
+
                 await hub.broadcast({
-                    "type": "topic_shift",
+                    "type": "transcript",
                     "ts": ts,
-                    "label": topic.label,
-                    "summary": topic.summary,
+                    "text": transcript,
+                    "topic_label": topic.label,
                 })
 
-            await hub.broadcast({
-                "type": "transcript",
-                "ts": ts,
-                "text": transcript,
-                "topic_label": topic.label,
-            })
+                # Step 2: Extract entities for Salesforce lookup.
+                try:
+                    new_entities = await extractor.extract(transcript)
+                except Exception as exc:
+                    logger.exception("Entity extraction failed: %s", exc)
+                    await hub.broadcast({"type": "error", "stage": "extract", "message": str(exc)})
+                    continue
 
-            # Step 2: Extract entities for Salesforce lookup.
-            try:
-                new_entities = await extractor.extract(transcript)
-            except Exception as exc:
-                logger.exception("Entity extraction failed: %s", exc)
-                await hub.broadcast({"type": "error", "stage": "extract", "message": str(exc)})
-                continue
+                entities_changed = topic.merge_entities(new_entities)
+                should_query = shifted or entities_changed
 
-            entities_changed = topic.merge_entities(new_entities)
-            should_query = shifted or entities_changed
+                await hub.broadcast({
+                    "type": "entities",
+                    "ts": ts,
+                    "entities": dict(topic.entities),
+                    "topic_label": topic.label,
+                })
 
-            await hub.broadcast({
-                "type": "entities",
-                "ts": ts,
-                "entities": dict(topic.entities),
-                "topic_label": topic.label,
-            })
+                if not should_query:
+                    continue
 
-            if not should_query:
-                continue
+                # Step 3: Query Salesforce only when the topic is fresh or
+                # entities changed within the current topic.
+                try:
+                    crm = await sf_client.query_for_entities(topic.entities)
+                except Exception as exc:
+                    logger.exception("Salesforce query failed: %s", exc)
+                    await hub.broadcast({"type": "error", "stage": "salesforce", "message": str(exc)})
+                    continue
 
-            # Step 3: Query Salesforce only when the topic is fresh or
-            # entities changed within the current topic.
-            try:
-                crm = await sf_client.query_for_entities(topic.entities)
-            except Exception as exc:
-                logger.exception("Salesforce query failed: %s", exc)
-                await hub.broadcast({"type": "error", "stage": "salesforce", "message": str(exc)})
-                continue
-
-            await hub.broadcast({
-                "type": "crm",
-                "ts": ts,
-                "data": crm,
-                "topic_label": topic.label,
-            })
+                await hub.broadcast({
+                    "type": "crm",
+                    "ts": ts,
+                    "data": crm,
+                    "topic_label": topic.label,
+                })
     except asyncio.CancelledError:
         logger.info("Pipeline stopped")
         raise
@@ -225,7 +251,13 @@ async def pipeline_loop(
 
 def build_app(config: Config) -> FastAPI:
     hub = ConnectionHub()
-    transcriber = Transcriber(api_key=config.openai_api_key, sample_rate=config.audio_sample_rate)
+    persisted = _load_persisted_settings(config.audio_chunk_seconds, config.audio_sample_rate)
+    settings = Settings(
+        sensitivity=persisted["sensitivity"],
+        audio_chunk_seconds=persisted["audio_chunk_seconds"],
+        audio_sample_rate=persisted["audio_sample_rate"],
+    )
+    transcriber = Transcriber(api_key=config.openai_api_key, sample_rate=settings.audio_sample_rate)
     context_mgr = ContextManager(api_key=config.anthropic_api_key)
     extractor = EntityExtractor(api_key=config.openai_api_key)
     sf_client = SalesforceClient(
@@ -233,11 +265,6 @@ def build_app(config: Config) -> FastAPI:
         password=config.sf_password,
         security_token=config.sf_security_token,
         domain=config.sf_domain,
-    )
-    persisted = _load_persisted_settings(config.audio_chunk_seconds)
-    settings = Settings(
-        sensitivity=persisted["sensitivity"],
-        audio_chunk_seconds=persisted["audio_chunk_seconds"],
     )
 
     @asynccontextmanager
@@ -269,12 +296,15 @@ def build_app(config: Config) -> FastAPI:
             "audio_chunk_seconds": settings.audio_chunk_seconds,
             "audio_chunk_seconds_min": AUDIO_CHUNK_MIN,
             "audio_chunk_seconds_max": AUDIO_CHUNK_MAX,
+            "audio_sample_rate": settings.audio_sample_rate,
+            "audio_sample_rate_options": AUDIO_SAMPLE_RATE_OPTIONS,
         }
 
     def _persist_settings() -> None:
         _save_persisted_settings({
             "sensitivity": settings.sensitivity,
             "audio_chunk_seconds": settings.audio_chunk_seconds,
+            "audio_sample_rate": settings.audio_sample_rate,
         })
 
     @app.get("/settings")
@@ -312,6 +342,25 @@ def build_app(config: Config) -> FastAPI:
         logger.info("Audio chunk duration set to %.1fs", value)
         await hub.broadcast({"type": "settings", "audio_chunk_seconds": value})
         return JSONResponse({"audio_chunk_seconds": settings.audio_chunk_seconds})
+
+    @app.post("/settings/audio_sample_rate")
+    async def set_audio_sample_rate(payload: dict):
+        raw = (payload or {}).get("audio_sample_rate")
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="audio_sample_rate must be an integer")
+        if value not in AUDIO_SAMPLE_RATE_OPTIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"audio_sample_rate must be one of {AUDIO_SAMPLE_RATE_OPTIONS}",
+            )
+        settings.audio_sample_rate = value
+        transcriber.sample_rate = value
+        _persist_settings()
+        logger.info("Audio sample rate set to %d Hz", value)
+        await hub.broadcast({"type": "settings", "audio_sample_rate": value})
+        return JSONResponse({"audio_sample_rate": settings.audio_sample_rate})
 
     MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 

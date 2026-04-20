@@ -21,6 +21,7 @@ async def microphone_chunks(
     chunk_seconds: float,
     channels: int = 1,
     get_chunk_seconds=None,
+    get_sample_rate=None,
 ) -> AsyncIterator[np.ndarray]:
     """Yield mono float32 numpy arrays of audio captured from the default mic.
 
@@ -31,6 +32,10 @@ async def microphone_chunks(
     If `get_chunk_seconds` is provided (a zero-argument callable), the chunk
     duration is re-evaluated on every iteration so changes take effect without
     restarting the server.
+
+    If `get_sample_rate` is provided, the generator exits when the returned
+    sample rate differs from the one the stream was opened with, allowing the
+    caller to restart the generator with the new rate.
     """
     initial_chunk_seconds = chunk_seconds
     audio_q: "queue.Queue[np.ndarray]" = queue.Queue()
@@ -60,6 +65,12 @@ async def microphone_chunks(
             buffer = np.zeros((0, channels), dtype="float32")
             loop = asyncio.get_running_loop()
             while True:
+                if get_sample_rate is not None and get_sample_rate() != sample_rate:
+                    logger.info(
+                        "Sample rate changed to %d Hz, restarting audio capture",
+                        get_sample_rate(),
+                    )
+                    return
                 block = await loop.run_in_executor(None, audio_q.get)
                 buffer = np.concatenate([buffer, block], axis=0)
                 current_seconds = get_chunk_seconds() if get_chunk_seconds is not None else initial_chunk_seconds

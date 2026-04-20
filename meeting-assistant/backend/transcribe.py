@@ -20,6 +20,14 @@ class Transcriber:
         self._sample_rate = sample_rate
         self._model = model
 
+    @property
+    def sample_rate(self) -> int:
+        return self._sample_rate
+
+    @sample_rate.setter
+    def sample_rate(self, value: int) -> None:
+        self._sample_rate = value
+
     async def transcribe(self, audio: np.ndarray) -> str:
         """Transcribe a 1-D float32 audio array. Returns text or empty string."""
         if audio.size == 0:

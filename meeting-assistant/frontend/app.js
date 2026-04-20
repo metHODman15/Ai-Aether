@@ -12,6 +12,7 @@
   const clearHistoryBtn = document.getElementById("clearHistoryBtn");
   const sensitivityEl = document.getElementById("sensitivity");
   const audioChunkEl = document.getElementById("audioChunkSeconds");
+  const audioSampleRateEl = document.getElementById("audioSampleRate");
   const historySearchEl = document.getElementById("historySearch");
   const searchNavEl = document.getElementById("searchNav");
   const searchCountEl = document.getElementById("searchCount");
@@ -522,11 +523,30 @@
         if (data.audio_chunk_seconds_max != null) audioChunkEl.max = data.audio_chunk_seconds_max;
         lastConfirmedAudioChunk = data.audio_chunk_seconds;
       }
+      if (data && Array.isArray(data.audio_sample_rate_options) && data.audio_sample_rate_options.length) {
+        const currentVal = data.audio_sample_rate != null ? data.audio_sample_rate : Number(audioSampleRateEl.value);
+        audioSampleRateEl.innerHTML = "";
+        for (const rate of data.audio_sample_rate_options) {
+          const opt = document.createElement("option");
+          opt.value = String(rate);
+          opt.textContent = rate.toLocaleString() + " Hz";
+          if (rate === currentVal) opt.selected = true;
+          audioSampleRateEl.appendChild(opt);
+        }
+        if (data.audio_sample_rate != null) {
+          audioSampleRateEl.value = String(data.audio_sample_rate);
+          lastConfirmedSampleRate = data.audio_sample_rate;
+        }
+      } else if (data && data.audio_sample_rate != null) {
+        audioSampleRateEl.value = String(data.audio_sample_rate);
+        lastConfirmedSampleRate = data.audio_sample_rate;
+      }
     } catch (e) { console.error("Failed to load settings", e); }
   }
 
   let lastConfirmedSensitivity = sensitivityEl.value;
   let lastConfirmedAudioChunk = Number(audioChunkEl.value);
+  let lastConfirmedSampleRate = Number(audioSampleRateEl.value);
 
   sensitivityEl.addEventListener("change", async () => {
     const value = sensitivityEl.value;
@@ -567,6 +587,27 @@
       audioChunkEl.value = lastConfirmedAudioChunk;
     } finally {
       audioChunkEl.disabled = false;
+    }
+  });
+
+  audioSampleRateEl.addEventListener("change", async () => {
+    const value = Number(audioSampleRateEl.value);
+    audioSampleRateEl.disabled = true;
+    try {
+      const res = await fetch("/settings/audio_sample_rate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio_sample_rate: value }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      lastConfirmedSampleRate = data.audio_sample_rate != null ? data.audio_sample_rate : value;
+      audioSampleRateEl.value = String(lastConfirmedSampleRate);
+    } catch (e) {
+      console.error("Failed to update audio sample rate", e);
+      audioSampleRateEl.value = String(lastConfirmedSampleRate);
+    } finally {
+      audioSampleRateEl.disabled = false;
     }
   });
 
@@ -999,6 +1040,10 @@
       if (evt.audio_chunk_seconds != null) {
         audioChunkEl.value = evt.audio_chunk_seconds;
         lastConfirmedAudioChunk = evt.audio_chunk_seconds;
+      }
+      if (evt.audio_sample_rate != null) {
+        audioSampleRateEl.value = String(evt.audio_sample_rate);
+        lastConfirmedSampleRate = evt.audio_sample_rate;
       }
       return;
     }
