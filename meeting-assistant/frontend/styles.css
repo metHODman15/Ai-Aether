@@ -75,6 +75,22 @@ header h1 {
   cursor: wait;
 }
 
+.sensitivity input[type="number"] {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  width: 60px;
+  text-align: center;
+}
+
+.sensitivity input[type="number"]:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
 .topic-badge {
   display: inline-flex;
   align-items: center;

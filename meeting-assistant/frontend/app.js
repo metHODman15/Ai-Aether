@@ -10,6 +10,7 @@
   const historyModeEl = document.getElementById("historyMode");
   const backToLiveBtn = document.getElementById("backToLive");
   const sensitivityEl = document.getElementById("sensitivity");
+  const audioChunkEl = document.getElementById("audioChunkSeconds");
   const historySearchEl = document.getElementById("historySearch");
   const searchNavEl = document.getElementById("searchNav");
   const searchCountEl = document.getElementById("searchCount");
@@ -431,7 +432,7 @@
     renderHistoryList(); renderViewedTopic();
   });
 
-  async function loadSensitivity() {
+  async function loadSettings() {
     try {
       const res = await fetch("/settings");
       if (!res.ok) return;
@@ -440,10 +441,17 @@
         sensitivityEl.value = data.sensitivity;
         lastConfirmedSensitivity = data.sensitivity;
       }
+      if (data && data.audio_chunk_seconds != null) {
+        audioChunkEl.value = data.audio_chunk_seconds;
+        if (data.audio_chunk_seconds_min != null) audioChunkEl.min = data.audio_chunk_seconds_min;
+        if (data.audio_chunk_seconds_max != null) audioChunkEl.max = data.audio_chunk_seconds_max;
+        lastConfirmedAudioChunk = data.audio_chunk_seconds;
+      }
     } catch (e) { console.error("Failed to load settings", e); }
   }
 
   let lastConfirmedSensitivity = sensitivityEl.value;
+  let lastConfirmedAudioChunk = Number(audioChunkEl.value);
 
   sensitivityEl.addEventListener("change", async () => {
     const value = sensitivityEl.value;
@@ -463,6 +471,27 @@
       sensitivityEl.value = lastConfirmedSensitivity;
     } finally {
       sensitivityEl.disabled = false;
+    }
+  });
+
+  audioChunkEl.addEventListener("change", async () => {
+    const value = Number(audioChunkEl.value);
+    audioChunkEl.disabled = true;
+    try {
+      const res = await fetch("/settings/audio_chunk_seconds", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio_chunk_seconds: value }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      lastConfirmedAudioChunk = data.audio_chunk_seconds != null ? data.audio_chunk_seconds : value;
+      audioChunkEl.value = lastConfirmedAudioChunk;
+    } catch (e) {
+      console.error("Failed to update audio chunk seconds", e);
+      audioChunkEl.value = lastConfirmedAudioChunk;
+    } finally {
+      audioChunkEl.disabled = false;
     }
   });
 
@@ -746,6 +775,10 @@
         sensitivityEl.value = evt.sensitivity;
         lastConfirmedSensitivity = evt.sensitivity;
       }
+      if (evt.audio_chunk_seconds != null) {
+        audioChunkEl.value = evt.audio_chunk_seconds;
+        lastConfirmedAudioChunk = evt.audio_chunk_seconds;
+      }
       return;
     }
 
@@ -787,6 +820,6 @@
   loadPersistedTopics();
   renderHistoryList();
   updateHistoryModeUi();
-  loadSensitivity();
+  loadSettings();
   connect();
 })();

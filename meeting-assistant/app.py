@@ -42,31 +42,53 @@ FRONTEND_DIR = ROOT / "frontend"
 SETTINGS_FILE = ROOT / "user_settings.json"
 
 
-def _load_persisted_sensitivity() -> str:
-    """Return the sensitivity stored on disk, or the default if absent/invalid."""
+AUDIO_CHUNK_MIN = 1.0
+AUDIO_CHUNK_MAX = 30.0
+
+
+def _load_persisted_settings(config_chunk_seconds: float) -> dict:
+    """Return user settings stored on disk, filling in defaults for any missing keys.
+
+    `config_chunk_seconds` is the value from the environment / Config dataclass and
+    is used as the fallback when no persisted value exists yet.
+    """
+    data: dict = {}
     try:
         data = json.loads(SETTINGS_FILE.read_text())
-        value = data.get("sensitivity", DEFAULT_SENSITIVITY)
-        if value in SENSITIVITY_LEVELS:
-            return value
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         pass
-    return DEFAULT_SENSITIVITY
+
+    sensitivity = data.get("sensitivity", DEFAULT_SENSITIVITY)
+    if sensitivity not in SENSITIVITY_LEVELS:
+        sensitivity = DEFAULT_SENSITIVITY
+
+    if "audio_chunk_seconds" in data:
+        try:
+            audio_chunk_seconds = float(data["audio_chunk_seconds"])
+            if not (AUDIO_CHUNK_MIN <= audio_chunk_seconds <= AUDIO_CHUNK_MAX):
+                audio_chunk_seconds = config_chunk_seconds
+        except (TypeError, ValueError):
+            audio_chunk_seconds = config_chunk_seconds
+    else:
+        audio_chunk_seconds = config_chunk_seconds
+
+    return {"sensitivity": sensitivity, "audio_chunk_seconds": audio_chunk_seconds}
 
 
-def _save_persisted_sensitivity(value: str) -> None:
-    """Write sensitivity to disk so it survives restarts."""
+def _save_persisted_settings(data: dict) -> None:
+    """Write user settings to disk so they survive restarts."""
     try:
-        SETTINGS_FILE.write_text(json.dumps({"sensitivity": value}))
+        SETTINGS_FILE.write_text(json.dumps(data))
     except OSError as exc:
-        logger.warning("Could not save sensitivity setting: %s", exc)
+        logger.warning("Could not save settings: %s", exc)
 
 
 class Settings:
     """Mutable runtime settings adjustable from the dashboard."""
 
-    def __init__(self, sensitivity: str = DEFAULT_SENSITIVITY) -> None:
+    def __init__(self, sensitivity: str = DEFAULT_SENSITIVITY, audio_chunk_seconds: float = 5.0) -> None:
         self.sensitivity = sensitivity
+        self.audio_chunk_seconds = audio_chunk_seconds
 
 
 async def pipeline_loop(
@@ -83,7 +105,8 @@ async def pipeline_loop(
     try:
         async for chunk in microphone_chunks(
             sample_rate=config.audio_sample_rate,
-            chunk_seconds=config.audio_chunk_seconds,
+            chunk_seconds=settings.audio_chunk_seconds,
+            get_chunk_seconds=lambda: settings.audio_chunk_seconds,
         ):
             ts = time.time()
             try:
@@ -191,7 +214,11 @@ def build_app(config: Config) -> FastAPI:
         security_token=config.sf_security_token,
         domain=config.sf_domain,
     )
-    settings = Settings(sensitivity=_load_persisted_sensitivity())
+    persisted = _load_persisted_settings(config.audio_chunk_seconds)
+    settings = Settings(
+        sensitivity=persisted["sensitivity"],
+        audio_chunk_seconds=persisted["audio_chunk_seconds"],
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -215,12 +242,24 @@ def build_app(config: Config) -> FastAPI:
     async def health():
         return JSONResponse({"status": "ok"})
 
-    @app.get("/settings")
-    async def get_settings():
-        return JSONResponse({
+    def _current_settings_payload() -> dict:
+        return {
             "sensitivity": settings.sensitivity,
             "sensitivity_options": list(SENSITIVITY_LEVELS),
+            "audio_chunk_seconds": settings.audio_chunk_seconds,
+            "audio_chunk_seconds_min": AUDIO_CHUNK_MIN,
+            "audio_chunk_seconds_max": AUDIO_CHUNK_MAX,
+        }
+
+    def _persist_settings() -> None:
+        _save_persisted_settings({
+            "sensitivity": settings.sensitivity,
+            "audio_chunk_seconds": settings.audio_chunk_seconds,
         })
+
+    @app.get("/settings")
+    async def get_settings():
+        return JSONResponse(_current_settings_payload())
 
     @app.post("/settings/sensitivity")
     async def set_sensitivity(payload: dict):
@@ -231,10 +270,28 @@ def build_app(config: Config) -> FastAPI:
                 detail=f"sensitivity must be one of {list(SENSITIVITY_LEVELS)}",
             )
         settings.sensitivity = value
-        _save_persisted_sensitivity(value)
+        _persist_settings()
         logger.info("Topic-shift sensitivity set to %s", value)
         await hub.broadcast({"type": "settings", "sensitivity": value})
         return JSONResponse({"sensitivity": settings.sensitivity})
+
+    @app.post("/settings/audio_chunk_seconds")
+    async def set_audio_chunk_seconds(payload: dict):
+        raw = (payload or {}).get("audio_chunk_seconds")
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="audio_chunk_seconds must be a number")
+        if not (AUDIO_CHUNK_MIN <= value <= AUDIO_CHUNK_MAX):
+            raise HTTPException(
+                status_code=400,
+                detail=f"audio_chunk_seconds must be between {AUDIO_CHUNK_MIN} and {AUDIO_CHUNK_MAX}",
+            )
+        settings.audio_chunk_seconds = value
+        _persist_settings()
+        logger.info("Audio chunk duration set to %.1fs", value)
+        await hub.broadcast({"type": "settings", "audio_chunk_seconds": value})
+        return JSONResponse({"audio_chunk_seconds": settings.audio_chunk_seconds})
 
     MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 

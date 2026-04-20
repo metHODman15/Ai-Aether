@@ -20,14 +20,19 @@ async def microphone_chunks(
     sample_rate: int,
     chunk_seconds: float,
     channels: int = 1,
+    get_chunk_seconds=None,
 ) -> AsyncIterator[np.ndarray]:
     """Yield mono float32 numpy arrays of audio captured from the default mic.
 
     Each chunk is roughly `chunk_seconds` long. The capture runs continuously
     on a background sounddevice thread; this generator drains a queue without
     blocking the asyncio event loop.
+
+    If `get_chunk_seconds` is provided (a zero-argument callable), the chunk
+    duration is re-evaluated on every iteration so changes take effect without
+    restarting the server.
     """
-    frames_per_chunk = int(sample_rate * chunk_seconds)
+    initial_chunk_seconds = chunk_seconds
     audio_q: "queue.Queue[np.ndarray]" = queue.Queue()
 
     def callback(indata, _frames, _time, status):
@@ -36,7 +41,8 @@ async def microphone_chunks(
         # Copy because sounddevice reuses the buffer.
         audio_q.put(indata.copy())
 
-    blocksize = max(1024, frames_per_chunk // 4)
+    initial_frames = int(sample_rate * initial_chunk_seconds)
+    blocksize = max(1024, initial_frames // 4)
 
     try:
         with sd.InputStream(
@@ -49,13 +55,15 @@ async def microphone_chunks(
             logger.info(
                 "Microphone capture started: %d Hz, %.1fs chunks",
                 sample_rate,
-                chunk_seconds,
+                initial_chunk_seconds,
             )
             buffer = np.zeros((0, channels), dtype="float32")
             loop = asyncio.get_running_loop()
             while True:
                 block = await loop.run_in_executor(None, audio_q.get)
                 buffer = np.concatenate([buffer, block], axis=0)
+                current_seconds = get_chunk_seconds() if get_chunk_seconds is not None else initial_chunk_seconds
+                frames_per_chunk = int(sample_rate * current_seconds)
                 while buffer.shape[0] >= frames_per_chunk:
                     chunk = buffer[:frames_per_chunk]
                     buffer = buffer[frames_per_chunk:]
