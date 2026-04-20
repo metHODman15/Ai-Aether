@@ -8,6 +8,7 @@ dashboard via WebSockets.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sys
 import time
@@ -37,6 +38,27 @@ logger = logging.getLogger("meeting-assistant")
 
 ROOT = Path(__file__).parent
 FRONTEND_DIR = ROOT / "frontend"
+SETTINGS_FILE = ROOT / "user_settings.json"
+
+
+def _load_persisted_sensitivity() -> str:
+    """Return the sensitivity stored on disk, or the default if absent/invalid."""
+    try:
+        data = json.loads(SETTINGS_FILE.read_text())
+        value = data.get("sensitivity", DEFAULT_SENSITIVITY)
+        if value in SENSITIVITY_LEVELS:
+            return value
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return DEFAULT_SENSITIVITY
+
+
+def _save_persisted_sensitivity(value: str) -> None:
+    """Write sensitivity to disk so it survives restarts."""
+    try:
+        SETTINGS_FILE.write_text(json.dumps({"sensitivity": value}))
+    except OSError as exc:
+        logger.warning("Could not save sensitivity setting: %s", exc)
 
 
 class Settings:
@@ -168,7 +190,7 @@ def build_app(config: Config) -> FastAPI:
         security_token=config.sf_security_token,
         domain=config.sf_domain,
     )
-    settings = Settings()
+    settings = Settings(sensitivity=_load_persisted_sensitivity())
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -208,6 +230,7 @@ def build_app(config: Config) -> FastAPI:
                 detail=f"sensitivity must be one of {list(SENSITIVITY_LEVELS)}",
             )
         settings.sensitivity = value
+        _save_persisted_sensitivity(value)
         logger.info("Topic-shift sensitivity set to %s", value)
         await hub.broadcast({"type": "settings", "sensitivity": value})
         return JSONResponse({"sensitivity": settings.sensitivity})
