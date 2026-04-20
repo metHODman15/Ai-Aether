@@ -28,6 +28,8 @@
   const docProgressBarEl = document.getElementById("docProgressBar");
   const docBackToLiveBtn = document.getElementById("docBackToLive");
   const docSearchEl = document.getElementById("docSearch");
+  const docStageFilterEl = document.getElementById("docStageFilter");
+  const docCustomerFilterEl = document.getElementById("docCustomerFilter");
   const docUnitCountEl = document.getElementById("docUnitCount");
   const uploadBtn = document.getElementById("uploadBtn");
   const uploadInput = document.getElementById("uploadInput");
@@ -40,6 +42,7 @@
   let searchHits = [];
   let currentHitIndex = -1;
   let docChartInstances = [];
+  const seenStages = new Set();
 
   const PALETTE = [
     "#38bdf8", "#a78bfa", "#f472b6", "#fb923c",
@@ -682,6 +685,9 @@
     docProgressLabelEl.textContent = "Processing…";
     docProgressBarEl.style.width = "0%";
     docSearchEl.value = "";
+    docStageFilterEl.innerHTML = '<option value="">All stages</option>';
+    seenStages.clear();
+    docCustomerFilterEl.value = "";
     docUnitCountEl.textContent = "";
     liveViewEl.hidden = true;
     docViewEl.hidden = false;
@@ -690,11 +696,16 @@
   function applyDocFilter() {
     const raw = docSearchEl.value.trim();
     const q = raw.toLowerCase();
+    const stageQ = docStageFilterEl.value;
+    const customerQ = docCustomerFilterEl.value.trim().toLowerCase();
     const cards = docUnitsEl.querySelectorAll(".doc-unit-card");
     let visible = 0;
     for (const card of cards) {
       const haystack = (card.dataset.search || "").toLowerCase();
-      const match = q === "" || haystack.includes(q);
+      const textMatch = q === "" || haystack.includes(q);
+      const stageMatch = !stageQ || (card.dataset.stage || "") === stageQ;
+      const customerMatch = !customerQ || (card.dataset.customer || "").includes(customerQ);
+      const match = textMatch && stageMatch && customerMatch;
       card.hidden = !match;
       if (match) visible++;
 
@@ -721,6 +732,8 @@
   }
 
   docSearchEl.addEventListener("input", applyDocFilter);
+  docStageFilterEl.addEventListener("change", applyDocFilter);
+  docCustomerFilterEl.addEventListener("input", applyDocFilter);
 
   function exitDocMode() {
     liveViewEl.hidden = false;
@@ -887,6 +900,18 @@
       ].filter(Boolean).join(" ")),
     ];
     card.dataset.search = searchParts.join(" ");
+
+    const stageKey = (entities.deal_stage || "").toLowerCase().trim();
+    card.dataset.stage = stageKey;
+    card.dataset.customer = (entities.customer_name || "").toLowerCase().trim();
+
+    if (stageKey && !seenStages.has(stageKey)) {
+      seenStages.add(stageKey);
+      const opt = document.createElement("option");
+      opt.value = stageKey;
+      opt.textContent = entities.deal_stage;
+      docStageFilterEl.appendChild(opt);
+    }
 
     docUnitsEl.appendChild(card);
     applyDocFilter();
