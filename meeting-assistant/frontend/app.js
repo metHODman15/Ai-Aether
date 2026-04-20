@@ -31,6 +31,7 @@
   const uploadInput = document.getElementById("uploadInput");
   const docSummaryEl = document.getElementById("docSummary");
   const docSummaryBodyEl = document.getElementById("docSummaryBody");
+  const docDownloadCsvBtn = document.getElementById("docDownloadCsv");
 
   let searchQuery = "";
   let docUnitsData = [];
@@ -544,6 +545,7 @@
     docUnitsData = [];
     docSummaryEl.hidden = true;
     docSummaryBodyEl.innerHTML = "";
+    docDownloadCsvBtn.hidden = true;
     docTitleEl.textContent = filename;
     docProgressLabelEl.textContent = "Processing…";
     docProgressBarEl.style.width = "0%";
@@ -779,6 +781,67 @@
     applyDocFilter();
   }
 
+  // ── CSV export ────────────────────────────────────────────────────────────
+
+  function csvCell(val) {
+    const s = val == null ? "" : String(val);
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+
+  function downloadDocCSV() {
+    const headers = [
+      "Unit Number",
+      "Text Excerpt",
+      "Customer Name",
+      "Contact Name",
+      "Deal Amount",
+      "Deal Stage",
+      "Keywords",
+      "Matched Account Names",
+      "Matched Opportunity Names",
+      "Matched Opportunity Stages",
+      "Matched Opportunity Amounts",
+    ];
+
+    const rows = docUnitsData.map((u, i) => {
+      const ent = u.entities || {};
+      const crm = u.crm || {};
+      const accounts = (crm.accounts || []).map(a => a.Name || "").filter(Boolean).join("; ");
+      const oppNames  = (crm.opportunities || []).map(o => o.Name || "").filter(Boolean).join("; ");
+      const oppStages = (crm.opportunities || []).map(o => o.StageName || "").filter(Boolean).join("; ");
+      const oppAmounts = (crm.opportunities || []).map(o => o.Amount != null ? o.Amount : "").join("; ");
+      const textExcerpt = (u.text || "").slice(0, 300);
+      return [
+        u.unit_index != null ? u.unit_index + 1 : i + 1,
+        textExcerpt,
+        ent.customer_name || "",
+        ent.contact_name || "",
+        ent.deal_amount != null ? ent.deal_amount : "",
+        ent.deal_stage || "",
+        (ent.keywords || []).join(", "),
+        accounts,
+        oppNames,
+        oppStages,
+        oppAmounts,
+      ].map(csvCell).join(",");
+    });
+
+    const csv = [headers.map(csvCell).join(","), ...rows].join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const filename = (docTitleEl.textContent || "document").replace(/\.[^.]+$/, "") + "_analysis.csv";
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  docDownloadCsvBtn.addEventListener("click", downloadDocCSV);
+
   // ── WebSocket event handler ───────────────────────────────────────────────
 
   function handleEvent(evt) {
@@ -790,7 +853,7 @@
     }
 
     if (evt.type === "document_unit") {
-      docUnitsData.push({ entities: evt.entities || {}, crm: evt.crm || {} });
+      docUnitsData.push({ unit_index: evt.unit_index, text: evt.text || "", entities: evt.entities || {}, crm: evt.crm || {} });
       appendDocUnit(evt);
       const pct = Math.round((evt.unit_index + 1) / evt.total_units * 100);
       docProgressBarEl.style.width = `${pct}%`;
@@ -806,6 +869,7 @@
     if (evt.type === "document_done") {
       docProgressLabelEl.textContent = `Done — ${evt.processed} of ${evt.total_units} processed`;
       docProgressBarEl.style.width = "100%";
+      if (docUnitsData.length > 0) { docDownloadCsvBtn.hidden = false; }
       requestDocSummary(docUnitsData.slice());
       return;
     }
