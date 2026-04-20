@@ -548,9 +548,21 @@
   let lastConfirmedAudioChunk = Number(audioChunkEl.value);
   let lastConfirmedSampleRate = Number(audioSampleRateEl.value);
 
+  function showSettingFeedback(el, success) {
+    const existing = el.parentElement.querySelector(".setting-feedback");
+    if (existing) existing.remove();
+    const badge = document.createElement("span");
+    badge.className = "setting-feedback " + (success ? "setting-feedback--ok" : "setting-feedback--err");
+    badge.textContent = success ? "Saved \u2713" : "Failed";
+    el.insertAdjacentElement("afterend", badge);
+    setTimeout(() => badge.classList.add("setting-feedback--hide"), 1600);
+    setTimeout(() => badge.remove(), 2100);
+  }
+
   sensitivityEl.addEventListener("change", async () => {
     const value = sensitivityEl.value;
     sensitivityEl.disabled = true;
+    let ok = false;
     try {
       const res = await fetch("/settings/sensitivity", {
         method: "POST",
@@ -561,17 +573,20 @@
       const data = await res.json();
       lastConfirmedSensitivity = data.sensitivity || value;
       sensitivityEl.value = lastConfirmedSensitivity;
+      ok = true;
     } catch (e) {
       console.error("Failed to update sensitivity", e);
       sensitivityEl.value = lastConfirmedSensitivity;
     } finally {
       sensitivityEl.disabled = false;
+      showSettingFeedback(sensitivityEl, ok);
     }
   });
 
   audioChunkEl.addEventListener("change", async () => {
     const value = Number(audioChunkEl.value);
     audioChunkEl.disabled = true;
+    let ok = false;
     try {
       const res = await fetch("/settings/audio_chunk_seconds", {
         method: "POST",
@@ -582,17 +597,20 @@
       const data = await res.json();
       lastConfirmedAudioChunk = data.audio_chunk_seconds != null ? data.audio_chunk_seconds : value;
       audioChunkEl.value = lastConfirmedAudioChunk;
+      ok = true;
     } catch (e) {
       console.error("Failed to update audio chunk seconds", e);
       audioChunkEl.value = lastConfirmedAudioChunk;
     } finally {
       audioChunkEl.disabled = false;
+      showSettingFeedback(audioChunkEl, ok);
     }
   });
 
   audioSampleRateEl.addEventListener("change", async () => {
     const value = Number(audioSampleRateEl.value);
     audioSampleRateEl.disabled = true;
+    let ok = false;
     try {
       const res = await fetch("/settings/audio_sample_rate", {
         method: "POST",
@@ -603,11 +621,13 @@
       const data = await res.json();
       lastConfirmedSampleRate = data.audio_sample_rate != null ? data.audio_sample_rate : value;
       audioSampleRateEl.value = String(lastConfirmedSampleRate);
+      ok = true;
     } catch (e) {
       console.error("Failed to update audio sample rate", e);
       audioSampleRateEl.value = String(lastConfirmedSampleRate);
     } finally {
       audioSampleRateEl.disabled = false;
+      showSettingFeedback(audioSampleRateEl, ok);
     }
   });
 
