@@ -50,7 +50,14 @@
     </section>
 
     <section class="panel transcript-panel">
-      <h2>Live Transcript</h2>
+      <div class="transcript-header">
+        <h2>Live Transcript</h2>
+        <div id="searchNav" class="search-nav" hidden>
+          <button id="searchPrev" type="button" aria-label="Previous match">&#8593;</button>
+          <span id="searchCount" class="search-count"></span>
+          <button id="searchNext" type="button" aria-label="Next match">&#8595;</button>
+        </div>
+      </div>
       <div id="transcript" class="transcript">
         <div class="empty-state">Listening…</div>
       </div>

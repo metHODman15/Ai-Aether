@@ -11,7 +11,13 @@
   const backToLiveBtn = document.getElementById("backToLive");
   const sensitivityEl = document.getElementById("sensitivity");
   const historySearchEl = document.getElementById("historySearch");
+  const searchNavEl = document.getElementById("searchNav");
+  const searchCountEl = document.getElementById("searchCount");
+  const searchPrevBtn = document.getElementById("searchPrev");
+  const searchNextBtn = document.getElementById("searchNext");
   let searchQuery = "";
+  let searchHits = [];
+  let currentHitIndex = -1;
 
   const PALETTE = [
     "#38bdf8", "#a78bfa", "#f472b6", "#fb923c",
@@ -208,6 +214,48 @@
     return safe.replace(re, (m) => `<mark class="search-hit">${m}</mark>`);
   }
 
+  function collectSearchHits() {
+    searchHits = Array.from(transcriptEl.querySelectorAll("mark.search-hit"));
+    currentHitIndex = searchHits.length > 0 ? 0 : -1;
+    searchHits.forEach((el, i) => el.classList.toggle("search-hit-current", i === 0));
+    updateSearchNav();
+  }
+
+  function updateSearchNav() {
+    if (searchHits.length === 0) {
+      searchNavEl.hidden = true;
+      return;
+    }
+    searchNavEl.hidden = false;
+    searchCountEl.textContent = `${currentHitIndex + 1} of ${searchHits.length}`;
+    if (currentHitIndex >= 0) {
+      searchHits[currentHitIndex].scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function navigateHit(dir) {
+    if (searchHits.length === 0) return;
+    searchHits[currentHitIndex]?.classList.remove("search-hit-current");
+    currentHitIndex = (currentHitIndex + dir + searchHits.length) % searchHits.length;
+    searchHits[currentHitIndex].classList.add("search-hit-current");
+    updateSearchNav();
+  }
+
+  function refreshSearchHitsQuiet() {
+    const prev = searchHits[currentHitIndex] || null;
+    searchHits = Array.from(transcriptEl.querySelectorAll("mark.search-hit"));
+    if (searchHits.length === 0) {
+      currentHitIndex = -1;
+      searchNavEl.hidden = true;
+      return;
+    }
+    const newIdx = prev ? searchHits.indexOf(prev) : -1;
+    currentHitIndex = newIdx >= 0 ? newIdx : 0;
+    searchHits.forEach((el, i) => el.classList.toggle("search-hit-current", i === currentHitIndex));
+    searchNavEl.hidden = false;
+    searchCountEl.textContent = `${currentHitIndex + 1} of ${searchHits.length}`;
+  }
+
   function entityValuesText(entities) {
     const e = entities || {};
     const parts = [];
@@ -257,16 +305,13 @@
         }
       }
       if (searchQuery) {
-        const needle = searchQuery.toLowerCase();
-        const firstHit = Array.from(
-          transcriptEl.querySelectorAll(".line:not(.error) .text")
-        ).find((el) => el.textContent.toLowerCase().includes(needle));
-        if (firstHit) {
-          firstHit.scrollIntoView({ block: "center" });
-          return;
-        }
+        collectSearchHits();
+        return;
       }
     }
+    searchHits = [];
+    currentHitIndex = -1;
+    searchNavEl.hidden = true;
     transcriptEl.scrollTop = transcriptEl.scrollHeight;
   }
 
@@ -285,7 +330,7 @@
       textEl.textContent = text;
     }
     transcriptEl.appendChild(line);
-    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    if (!searchQuery) transcriptEl.scrollTop = transcriptEl.scrollHeight;
   }
 
   function renderHistoryList() {
@@ -379,6 +424,9 @@
 
   backToLiveBtn.addEventListener("click", backToLive);
 
+  searchPrevBtn.addEventListener("click", () => navigateHit(-1));
+  searchNextBtn.addEventListener("click", () => navigateHit(1));
+
   historySearchEl.addEventListener("input", () => {
     searchQuery = historySearchEl.value.trim();
     renderHistoryList();
@@ -458,7 +506,10 @@
       if (t.lines.length > MAX_LINES_PER_TOPIC) {
         t.lines.splice(0, t.lines.length - MAX_LINES_PER_TOPIC);
       }
-      if (isViewingLive()) appendTranscriptLine(evt.text, evt.ts);
+      if (isViewingLive()) {
+        appendTranscriptLine(evt.text, evt.ts);
+        if (searchQuery) refreshSearchHitsQuiet();
+      }
       if (searchQuery) renderHistoryList();
       return;
     }

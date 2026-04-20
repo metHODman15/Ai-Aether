@@ -221,6 +221,58 @@ mark.search-hit {
   padding: 0 1px;
 }
 
+mark.search-hit-current {
+  background: rgba(250,204,21,0.9);
+  color: #0f172a;
+  outline: 2px solid #facc15;
+}
+
+.transcript-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.transcript-header h2 {
+  margin: 0;
+}
+
+.search-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.search-nav button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+
+.search-nav button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.search-count {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+  text-align: center;
+}
+
 .history-list {
   list-style: none;
   padding: 0;
