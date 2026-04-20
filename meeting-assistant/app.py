@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -24,6 +24,7 @@ import uvicorn
 from backend.audio import microphone_chunks
 from backend.config import Config, ConfigError
 from backend.context import ContextManager, DEFAULT_SENSITIVITY, SENSITIVITY_LEVELS
+from backend.document_parser import parse_document
 from backend.entities import EntityExtractor
 from backend.hub import ConnectionHub
 from backend.salesforce_client import SalesforceClient
@@ -234,6 +235,69 @@ def build_app(config: Config) -> FastAPI:
         logger.info("Topic-shift sensitivity set to %s", value)
         await hub.broadcast({"type": "settings", "sensitivity": value})
         return JSONResponse({"sensitivity": settings.sensitivity})
+
+    MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
+
+    @app.post("/upload")
+    async def upload_document(file: UploadFile = File(...)):
+        content = await file.read()
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="File too large (max 5 MB).")
+
+        filename = file.filename or "upload"
+        try:
+            units = parse_document(filename, content)
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except Exception as exc:
+            logger.exception("Document parsing failed: %s", exc)
+            raise HTTPException(status_code=500, detail=f"Parsing failed: {exc}")
+
+        total = len(units)
+        await hub.broadcast({
+            "type": "document_start",
+            "filename": filename,
+            "total_units": total,
+        })
+
+        processed = 0
+        for idx, text in enumerate(units):
+            try:
+                entities = await extractor.extract(text)
+            except Exception as exc:
+                logger.warning("Entity extraction failed for unit %d: %s", idx, exc)
+                await hub.broadcast({
+                    "type": "document_unit_error",
+                    "unit_index": idx,
+                    "total_units": total,
+                    "message": f"Entity extraction failed: {exc}",
+                })
+                continue
+
+            try:
+                crm = await sf_client.query_for_entities(entities)
+            except Exception as exc:
+                logger.warning("Salesforce query failed for unit %d: %s", idx, exc)
+                crm = {}
+
+            await hub.broadcast({
+                "type": "document_unit",
+                "unit_index": idx,
+                "total_units": total,
+                "text": text,
+                "entities": dict(entities),
+                "crm": crm,
+            })
+            processed += 1
+
+        await hub.broadcast({
+            "type": "document_done",
+            "filename": filename,
+            "total_units": total,
+            "processed": processed,
+        })
+
+        return JSONResponse({"status": "ok", "filename": filename, "total_units": total})
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):

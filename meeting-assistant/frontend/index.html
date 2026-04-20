@@ -17,6 +17,8 @@
       </div>
     </div>
     <div class="header-right">
+      <button id="uploadBtn" class="upload-btn" type="button">Upload Minutes</button>
+      <input id="uploadInput" type="file" hidden accept=".pdf,.docx,.txt" />
       <label class="sensitivity">
         <span class="sensitivity-label">Topic-shift sensitivity</span>
         <select id="sensitivity">
@@ -29,7 +31,7 @@
     </div>
   </header>
 
-  <main>
+  <main id="liveView">
     <section class="panel history-panel">
       <h2>Recent Topics</h2>
       <div class="history-search">
@@ -98,6 +100,20 @@
       </div>
     </section>
   </main>
+
+  <div id="docView" class="doc-view" hidden>
+    <div class="doc-view-header">
+      <div class="doc-view-title">
+        <span id="docTitle">Document</span>
+        <span id="docProgressLabel" class="doc-progress-label"></span>
+      </div>
+      <div class="doc-progress-bar-wrap">
+        <div id="docProgressBar" class="doc-progress-bar" style="width:0%"></div>
+      </div>
+      <button id="docBackToLive" type="button">&#8592; Back to Live</button>
+    </div>
+    <div id="docUnits" class="doc-units"></div>
+  </div>
 
   <script src="/app.js"></script>
 </body>
