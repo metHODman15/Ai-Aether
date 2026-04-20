@@ -34,15 +34,16 @@ def _load_app_module():
     for name in ("dotenv", "fastapi", "fastapi.responses", "fastapi.staticfiles",
                  "uvicorn", "backend", "backend.audio", "backend.config",
                  "backend.context", "backend.document_parser", "backend.entities",
-                 "backend.hub", "backend.salesforce_client", "backend.topic_state",
-                 "backend.transcribe"):
+                 "backend.hub", "backend.salesforce_client", "backend.store",
+                 "backend.topic_state", "backend.transcribe"):
         mod = types.ModuleType(name)
         for attr in ("load_dotenv", "FastAPI", "File", "HTTPException", "UploadFile",
                      "WebSocket", "WebSocketDisconnect", "JSONResponse", "StaticFiles",
                      "run", "microphone_chunks", "Config", "ConfigError",
                      "ContextManager", "DEFAULT_SENSITIVITY", "SENSITIVITY_LEVELS",
                      "parse_document", "EntityExtractor", "ConnectionHub",
-                     "SalesforceClient", "TopicState", "Transcriber"):
+                     "MeetingStore", "SalesforceClient", "TopicState",
+                     "Transcriber", "create_transcriber"):
             setattr(mod, attr, MagicMock())
         stubs[name] = mod
 
@@ -445,3 +446,44 @@ class TestCleanupStaleTempFiles:
         os.utime(other, (mtime, mtime))
         _cleanup_stale_temp_files()
         assert other.exists(), "Non-temp files must not be touched"
+
+    def test_directory_glob_oserror_is_swallowed(self, monkeypatch):
+        """An OSError from the directory glob must not propagate."""
+        from pathlib import Path as _Path
+
+        original_glob = _Path.glob
+
+        def exploding_glob(self, pattern):
+            if pattern == ".settings_tmp_*":
+                raise OSError("permission denied")
+            return original_glob(self, pattern)
+
+        monkeypatch.setattr(_Path, "glob", exploding_glob)
+        _cleanup_stale_temp_files()  # must return without raising
+
+    def test_per_file_oserror_does_not_abort_remaining_files(self, monkeypatch):
+        """An OSError on one file's unlink (e.g. it vanished between stat and
+        unlink) must not abort cleanup of the remaining files in the batch."""
+        stale1 = self._make_tmp_file(".settings_tmp_first", _STALE_TMP_AGE_SECONDS + 60)
+        stale2 = self._make_tmp_file(".settings_tmp_second", _STALE_TMP_AGE_SECONDS + 60)
+
+        from pathlib import Path as _Path
+        original_unlink = _Path.unlink
+        unlink_call_count = [0]
+
+        def patched_unlink(self, missing_ok=False):
+            unlink_call_count[0] += 1
+            if unlink_call_count[0] == 1:
+                raise OSError("file disappeared between stat and unlink")
+            original_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(_Path, "unlink", patched_unlink)
+        _cleanup_stale_temp_files()
+
+        deleted = [p for p in [stale1, stale2] if not p.exists()]
+        assert len(deleted) >= 1, (
+            "At least one file must be cleaned up even when another raises OSError"
+        )
+        assert unlink_call_count[0] == 2, (
+            "Both files must have had unlink attempted — the loop must not abort early"
+        )
