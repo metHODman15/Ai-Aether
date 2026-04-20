@@ -289,6 +289,28 @@ mark.search-hit-current {
   text-align: center;
 }
 
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+.history-header h2 { margin: 0; }
+.clear-history-btn {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.clear-history-btn:hover {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
 .history-list {
   list-style: none;
   padding: 0;
@@ -305,6 +327,7 @@ mark.search-hit-current {
   cursor: pointer;
   border: 1px solid transparent;
   transition: border-color 0.2s, background 0.2s;
+  position: relative;
 }
 .history-list li:hover { border-color: var(--accent); }
 .history-list li.active {
@@ -331,8 +354,25 @@ mark.search-hit-current {
   padding: 4px 8px;
 }
 .history-list li.search-scope-note:hover { border-color: transparent; }
-.history-list .h-label { font-weight: 600; word-break: break-word; }
+.history-list .h-label { font-weight: 600; word-break: break-word; padding-right: 20px; }
 .history-list .h-time { color: var(--muted); font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.history-list .h-delete-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 3px;
+  cursor: pointer;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.history-list li:hover .h-delete-btn { opacity: 1; }
+.history-list .h-delete-btn:hover { color: var(--bad); }
 
 body.history-mode .transcript,
 body.history-mode .entities-panel,

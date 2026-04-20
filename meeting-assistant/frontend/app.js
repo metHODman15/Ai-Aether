@@ -9,6 +9,7 @@
   const historyListEl = document.getElementById("historyList");
   const historyModeEl = document.getElementById("historyMode");
   const backToLiveBtn = document.getElementById("backToLive");
+  const clearHistoryBtn = document.getElementById("clearHistoryBtn");
   const sensitivityEl = document.getElementById("sensitivity");
   const audioChunkEl = document.getElementById("audioChunkSeconds");
   const historySearchEl = document.getElementById("historySearch");
@@ -393,6 +394,15 @@
       const time = document.createElement("div");
       time.className = "h-time";
       time.textContent = new Date(t.startedAt * 1000).toLocaleTimeString();
+      if (!isLive) {
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "h-delete-btn";
+        delBtn.title = "Delete this topic";
+        delBtn.textContent = "×";
+        delBtn.addEventListener("click", (e) => { e.stopPropagation(); deleteTopic(t.id); });
+        li.appendChild(delBtn);
+      }
       li.appendChild(label); li.appendChild(time);
       li.addEventListener("click", () => viewTopic(t.id));
       historyListEl.appendChild(li);
@@ -429,7 +439,39 @@
     updateHistoryModeUi(); renderViewedTopic(); renderHistoryList();
   }
 
+  function deleteTopic(id) {
+    if (id === currentId) return;
+    const t = getTopic(id);
+    const label = t ? (t.label || "Untitled topic") : "this topic";
+    if (!confirm(`Delete "${label}" from history? This cannot be undone.`)) return;
+    const idx = topics.findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    topics.splice(idx, 1);
+    if (viewingId === id) {
+      viewingId = null;
+      updateHistoryModeUi();
+    }
+    persistTopics();
+    renderHistoryList();
+    renderViewedTopic();
+  }
+
+  function clearAllHistory() {
+    const pastCount = topics.filter((t) => t.id !== currentId).length;
+    if (pastCount === 0) return;
+    if (!confirm(`Clear ${pastCount} past topic(s) from history? This cannot be undone.`)) return;
+    const live = currentId != null ? getTopic(currentId) : null;
+    topics.length = 0;
+    if (live) topics.push(live);
+    viewingId = null;
+    persistTopics();
+    updateHistoryModeUi();
+    renderHistoryList();
+    renderViewedTopic();
+  }
+
   backToLiveBtn.addEventListener("click", backToLive);
+  clearHistoryBtn.addEventListener("click", clearAllHistory);
   searchPrevBtn.addEventListener("click", () => navigateHit(-1));
   searchNextBtn.addEventListener("click", () => navigateHit(1));
 
