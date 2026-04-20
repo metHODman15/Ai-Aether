@@ -24,23 +24,51 @@ class ContextDecision(TypedDict):
     summary: str
 
 
-SYSTEM_PROMPT = """You are a meeting context tracker. You receive the
+SENSITIVITY_LEVELS = ("conservative", "balanced", "aggressive")
+DEFAULT_SENSITIVITY = "balanced"
+
+_SENSITIVITY_GUIDANCE = {
+    "conservative": (
+        "Be very reluctant to declare a shift. Only set shift=true when the "
+        "new chunk is unmistakably about a completely different customer, "
+        "deal, or subject. When in doubt, treat it as the same topic."
+    ),
+    "balanced": (
+        "Treat a shift as real only when the new chunk is clearly about a "
+        "different subject (different customer, different deal, different "
+        "product, etc.). Small tangents or follow-up clarifications are NOT "
+        "shifts."
+    ),
+    "aggressive": (
+        "Lean toward declaring a shift. If the new chunk introduces a "
+        "noticeably different customer, deal, product, or operational "
+        "subject — even briefly — set shift=true. Only stay on the same "
+        "topic when the chunk is plainly continuing the same discussion."
+    ),
+}
+
+
+def _system_prompt(sensitivity: str) -> str:
+    guidance = _SENSITIVITY_GUIDANCE.get(
+        sensitivity, _SENSITIVITY_GUIDANCE[DEFAULT_SENSITIVITY]
+    )
+    return f"""You are a meeting context tracker. You receive the
 current topic's label and a rolling summary, plus the latest transcript
 chunk from a live sales call. Decide whether the latest chunk continues
 the same topic or shifts to a new one.
 
 Return ONLY a single JSON object with this shape:
-{
+{{
   "shift": boolean,        // true if the topic clearly changed
   "topic_label": string,   // a 2-6 word label for the (new or current) topic
   "summary": string        // <= 50 words rolling summary of the current topic
-}
+}}
 
 A "topic" is a coherent subject of discussion: a specific customer,
-deal, opportunity, product line, or operational subject. Small tangents
-or follow-up clarifications are NOT shifts. Treat a shift as real only
-when the new chunk is clearly about a different subject (different
-customer, different deal, different product, etc.).
+deal, opportunity, product line, or operational subject.
+
+Shift sensitivity: {sensitivity}.
+{guidance}
 
 If there is no current topic yet (empty label), set shift=true and
 propose a label for the new chunk.
@@ -58,13 +86,18 @@ class ContextManager:
         current_label: str,
         current_summary: str,
         transcript_chunk: str,
+        sensitivity: str = DEFAULT_SENSITIVITY,
     ) -> ContextDecision:
         if not transcript_chunk.strip():
             return ContextDecision(
                 shift=False, topic_label=current_label, summary=current_summary
             )
         return await asyncio.to_thread(
-            self._evaluate_sync, current_label, current_summary, transcript_chunk
+            self._evaluate_sync,
+            current_label,
+            current_summary,
+            transcript_chunk,
+            sensitivity,
         )
 
     def _evaluate_sync(
@@ -72,6 +105,7 @@ class ContextManager:
         current_label: str,
         current_summary: str,
         transcript_chunk: str,
+        sensitivity: str,
     ) -> ContextDecision:
         user_payload = json.dumps(
             {
@@ -85,7 +119,7 @@ class ContextManager:
                 msg = self._client.messages.create(
                     model=self._model,
                     max_tokens=300,
-                    system=SYSTEM_PROMPT,
+                    system=_system_prompt(sensitivity),
                     messages=[{"role": "user", "content": user_payload}],
                 )
                 raw = "".join(

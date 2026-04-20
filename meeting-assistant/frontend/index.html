@@ -16,7 +16,17 @@
         <span class="topic-label">Waiting for first topic…</span>
       </div>
     </div>
-    <div id="status" class="status disconnected">Disconnected</div>
+    <div class="header-right">
+      <label class="sensitivity">
+        <span class="sensitivity-label">Topic-shift sensitivity</span>
+        <select id="sensitivity">
+          <option value="conservative">Conservative</option>
+          <option value="balanced" selected>Balanced</option>
+          <option value="aggressive">Aggressive</option>
+        </select>
+      </label>
+      <div id="status" class="status disconnected">Disconnected</div>
+    </div>
   </header>
 
   <main>

@@ -9,6 +9,7 @@
   const historyListEl = document.getElementById("historyList");
   const historyModeEl = document.getElementById("historyMode");
   const backToLiveBtn = document.getElementById("backToLive");
+  const sensitivityEl = document.getElementById("sensitivity");
 
   const PALETTE = [
     "#38bdf8", "#a78bfa", "#f472b6", "#fb923c",
@@ -304,6 +305,43 @@
 
   backToLiveBtn.addEventListener("click", backToLive);
 
+  async function loadSensitivity() {
+    try {
+      const res = await fetch("/settings");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && data.sensitivity) {
+        sensitivityEl.value = data.sensitivity;
+        lastConfirmedSensitivity = data.sensitivity;
+      }
+    } catch (e) {
+      console.error("Failed to load settings", e);
+    }
+  }
+
+  let lastConfirmedSensitivity = sensitivityEl.value;
+
+  sensitivityEl.addEventListener("change", async () => {
+    const value = sensitivityEl.value;
+    sensitivityEl.disabled = true;
+    try {
+      const res = await fetch("/settings/sensitivity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sensitivity: value }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      lastConfirmedSensitivity = data.sensitivity || value;
+      sensitivityEl.value = lastConfirmedSensitivity;
+    } catch (e) {
+      console.error("Failed to update sensitivity", e);
+      sensitivityEl.value = lastConfirmedSensitivity;
+    } finally {
+      sensitivityEl.disabled = false;
+    }
+  });
+
   function startNewTopic(label, ts) {
     const topic = {
       id: nextId++,
@@ -362,6 +400,14 @@
       return;
     }
 
+    if (evt.type === "settings") {
+      if (evt.sensitivity) {
+        sensitivityEl.value = evt.sensitivity;
+        lastConfirmedSensitivity = evt.sensitivity;
+      }
+      return;
+    }
+
     if (evt.type === "error") {
       const t = currentTopic();
       const errLine = { ts: evt.ts || Date.now() / 1000, text: `[${evt.stage} error] ${evt.message}`, error: true };
@@ -404,6 +450,7 @@
   // Initial render
   renderHistoryList();
   updateHistoryModeUi();
+  loadSensitivity();
 
   connect();
 })();

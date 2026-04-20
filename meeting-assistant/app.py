@@ -15,14 +15,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from backend.audio import microphone_chunks
 from backend.config import Config, ConfigError
-from backend.context import ContextManager
+from backend.context import ContextManager, DEFAULT_SENSITIVITY, SENSITIVITY_LEVELS
 from backend.entities import EntityExtractor
 from backend.hub import ConnectionHub
 from backend.salesforce_client import SalesforceClient
@@ -39,6 +39,13 @@ ROOT = Path(__file__).parent
 FRONTEND_DIR = ROOT / "frontend"
 
 
+class Settings:
+    """Mutable runtime settings adjustable from the dashboard."""
+
+    def __init__(self, sensitivity: str = DEFAULT_SENSITIVITY) -> None:
+        self.sensitivity = sensitivity
+
+
 async def pipeline_loop(
     config: Config,
     transcriber: Transcriber,
@@ -46,6 +53,7 @@ async def pipeline_loop(
     extractor: EntityExtractor,
     sf_client: SalesforceClient,
     hub: ConnectionHub,
+    settings: Settings,
 ) -> None:
     """Continuously capture, transcribe, evaluate context, query, broadcast."""
     topic = TopicState()
@@ -68,7 +76,10 @@ async def pipeline_loop(
             # Step 1: Claude decides whether the topic shifted.
             try:
                 decision = await context_mgr.evaluate(
-                    topic.label, topic.summary, transcript
+                    topic.label,
+                    topic.summary,
+                    transcript,
+                    sensitivity=settings.sensitivity,
                 )
             except Exception as exc:
                 logger.exception("Context evaluation failed: %s", exc)
@@ -157,11 +168,14 @@ def build_app(config: Config) -> FastAPI:
         security_token=config.sf_security_token,
         domain=config.sf_domain,
     )
+    settings = Settings()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         task = asyncio.create_task(
-            pipeline_loop(config, transcriber, context_mgr, extractor, sf_client, hub)
+            pipeline_loop(
+                config, transcriber, context_mgr, extractor, sf_client, hub, settings
+            )
         )
         try:
             yield
@@ -177,6 +191,26 @@ def build_app(config: Config) -> FastAPI:
     @app.get("/health")
     async def health():
         return JSONResponse({"status": "ok"})
+
+    @app.get("/settings")
+    async def get_settings():
+        return JSONResponse({
+            "sensitivity": settings.sensitivity,
+            "sensitivity_options": list(SENSITIVITY_LEVELS),
+        })
+
+    @app.post("/settings/sensitivity")
+    async def set_sensitivity(payload: dict):
+        value = (payload or {}).get("sensitivity", "")
+        if value not in SENSITIVITY_LEVELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"sensitivity must be one of {list(SENSITIVITY_LEVELS)}",
+            )
+        settings.sensitivity = value
+        logger.info("Topic-shift sensitivity set to %s", value)
+        await hub.broadcast({"type": "settings", "sensitivity": value})
+        return JSONResponse({"sensitivity": settings.sensitivity})
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):

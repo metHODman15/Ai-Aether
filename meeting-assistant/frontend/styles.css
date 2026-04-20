@@ -41,6 +41,40 @@ header h1 {
   gap: 16px;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.sensitivity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sensitivity-label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sensitivity select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sensitivity select:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
 .topic-badge {
   display: inline-flex;
   align-items: center;
