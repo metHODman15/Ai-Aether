@@ -92,6 +92,14 @@
   let viewingId = null;
   let nextId = 1;
   let _saveTimer = null;
+  let currentSessionId = null;
+
+  function fmtSessionLabel(sessionId) {
+    const d = new Date(sessionId * 1000);
+    const datePart = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+    const timePart = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    return `${datePart} \u00b7 ${timePart}`;
+  }
 
   function getTopic(id) { return topics.find((t) => t.id === id) || null; }
   function currentTopic() { return getTopic(currentId); }
@@ -113,10 +121,12 @@
   }
 
   function normalizeTopic(t) {
+    const startedAt = typeof t.startedAt === "number" ? t.startedAt : Date.now() / 1000;
     return {
       id: typeof t.id === "number" ? t.id : nextId++,
       label: typeof t.label === "string" ? t.label : "Untitled topic",
-      startedAt: typeof t.startedAt === "number" ? t.startedAt : Date.now() / 1000,
+      startedAt,
+      sessionId: typeof t.sessionId === "number" ? t.sessionId : startedAt,
       lines: Array.isArray(t.lines) ? t.lines : [],
       entities: t.entities && typeof t.entities === "object" ? t.entities : {},
       crm: t.crm && typeof t.crm === "object" ? t.crm : {},
@@ -377,7 +387,18 @@
       info.textContent = `Searching all ${topics.length} topics`;
       historyListEl.appendChild(info);
     }
+    let lastSessionKey = undefined;
+    let firstDivider = true;
     for (const t of ordered) {
+      const sessionKey = t.sessionId != null ? t.sessionId : t.startedAt;
+      if (sessionKey !== lastSessionKey) {
+        const divider = document.createElement("li");
+        divider.className = firstDivider ? "h-session-divider h-session-divider--first" : "h-session-divider";
+        divider.textContent = fmtSessionLabel(sessionKey);
+        historyListEl.appendChild(divider);
+        lastSessionKey = sessionKey;
+        firstDivider = false;
+      }
       const li = document.createElement("li");
       const isLive = t.id === currentId;
       const isActive = (viewingId != null ? t.id === viewingId : isLive);
@@ -393,7 +414,13 @@
       }
       const time = document.createElement("div");
       time.className = "h-time";
-      time.textContent = new Date(t.startedAt * 1000).toLocaleTimeString();
+      const topicDate = new Date(t.startedAt * 1000);
+      if (searchQuery) {
+        const dateStr = topicDate.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+        time.textContent = `${dateStr} \u00b7 ${topicDate.toLocaleTimeString()}`;
+      } else {
+        time.textContent = topicDate.toLocaleTimeString();
+      }
       if (!isLive) {
         const delBtn = document.createElement("button");
         delBtn.type = "button";
@@ -544,10 +571,12 @@
   });
 
   function startNewTopic(label, ts) {
+    if (!currentSessionId) currentSessionId = Date.now() / 1000;
     const topic = {
       id: nextId++,
       label: label || "Untitled topic",
       startedAt: ts || Date.now() / 1000,
+      sessionId: currentSessionId,
       lines: [], entities: {}, crm: {},
     };
     topics.push(topic);
@@ -1000,8 +1029,8 @@
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${window.location.host}/ws`;
     const ws = new WebSocket(url);
-    ws.onopen = () => setStatus(true);
-    ws.onclose = () => { setStatus(false); setTimeout(connect, 2000); };
+    ws.onopen = () => { currentSessionId = Date.now() / 1000; setStatus(true); };
+    ws.onclose = () => { currentSessionId = null; setStatus(false); setTimeout(connect, 2000); };
     ws.onerror = () => ws.close();
     ws.onmessage = (msg) => {
       try { handleEvent(JSON.parse(msg.data)); }

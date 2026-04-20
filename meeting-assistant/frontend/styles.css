@@ -354,6 +354,21 @@ mark.search-hit-current {
   padding: 4px 8px;
 }
 .history-list li.search-scope-note:hover { border-color: transparent; }
+.history-list li.h-session-divider {
+  background: transparent;
+  border: none;
+  border-top: 1px solid rgba(148,163,184,0.2);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: default;
+  padding: 8px 4px 4px;
+  margin-bottom: 4px;
+}
+.history-list li.h-session-divider:hover { border-color: transparent; border-top-color: rgba(148,163,184,0.2); }
+.history-list li.h-session-divider--first { border-top: none; padding-top: 2px; }
 .history-list .h-label { font-weight: 600; word-break: break-word; padding-right: 20px; }
 .history-list .h-time { color: var(--muted); font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .history-list .h-delete-btn {
