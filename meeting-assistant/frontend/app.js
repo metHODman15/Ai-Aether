@@ -688,7 +688,8 @@
   }
 
   function applyDocFilter() {
-    const q = docSearchEl.value.trim().toLowerCase();
+    const raw = docSearchEl.value.trim();
+    const q = raw.toLowerCase();
     const cards = docUnitsEl.querySelectorAll(".doc-unit-card");
     let visible = 0;
     for (const card of cards) {
@@ -696,6 +697,24 @@
       const match = q === "" || haystack.includes(q);
       card.hidden = !match;
       if (match) visible++;
+
+      const textEl = card.querySelector(".doc-unit-text[data-original]");
+      if (textEl) {
+        if (match && raw) {
+          textEl.innerHTML = highlightHtml(textEl.dataset.original, raw);
+        } else {
+          textEl.textContent = textEl.dataset.original;
+        }
+      }
+
+      const dds = card.querySelectorAll(".doc-unit-entities dd[data-original]");
+      for (const dd of dds) {
+        if (match && raw) {
+          dd.innerHTML = highlightHtml(dd.dataset.original, raw);
+        } else {
+          dd.textContent = dd.dataset.original;
+        }
+      }
     }
     const total = cards.length;
     docUnitCountEl.textContent = total > 0 ? `${visible} of ${total} unit${total !== 1 ? "s" : ""}` : "";
@@ -766,19 +785,29 @@
 
     const textWrap = document.createElement("div");
     textWrap.className = "doc-unit-text";
+    textWrap.dataset.original = evt.text;
     textWrap.textContent = evt.text;
     card.appendChild(textWrap);
 
     const entities = evt.entities || {};
     const entDiv = document.createElement("dl");
     entDiv.className = "doc-unit-entities";
-    entDiv.innerHTML = `
-      <dt>Customer</dt><dd>${escapeHtml(entities.customer_name || "—")}</dd>
-      <dt>Contact</dt><dd>${escapeHtml(entities.contact_name || "—")}</dd>
-      <dt>Amount</dt><dd>${entities.deal_amount != null ? fmtAmount(entities.deal_amount) : "—"}</dd>
-      <dt>Stage</dt><dd>${escapeHtml(entities.deal_stage || "—")}</dd>
-      <dt>Keywords</dt><dd>${escapeHtml((entities.keywords || []).join(", ") || "—")}</dd>
-    `;
+    const entityFields = [
+      ["Customer", entities.customer_name || "—"],
+      ["Contact", entities.contact_name || "—"],
+      ["Amount", entities.deal_amount != null ? fmtAmount(entities.deal_amount) : "—"],
+      ["Stage", entities.deal_stage || "—"],
+      ["Keywords", (entities.keywords || []).join(", ") || "—"],
+    ];
+    for (const [label, value] of entityFields) {
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.dataset.original = value;
+      dd.textContent = value;
+      entDiv.appendChild(dt);
+      entDiv.appendChild(dd);
+    }
     card.appendChild(entDiv);
 
     const crm = evt.crm || {};
