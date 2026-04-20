@@ -134,6 +134,8 @@
       lines: Array.isArray(t.lines) ? t.lines : [],
       entities: t.entities && typeof t.entities === "object" ? t.entities : {},
       crm: t.crm && typeof t.crm === "object" ? t.crm : {},
+      serverId: typeof t.serverId === "string" ? t.serverId : null,
+      fromServer: !!t.fromServer,
     };
   }
 
@@ -408,6 +410,7 @@
       const isActive = (viewingId != null ? t.id === viewingId : isLive);
       if (isLive) li.classList.add("live");
       if (isActive) li.classList.add("active");
+      if (t.fromServer && !isLive) li.classList.add("from-server");
       const label = document.createElement("div");
       label.className = "h-label";
       const labelText = t.label || "Untitled topic";
@@ -415,6 +418,13 @@
         label.innerHTML = highlightHtml(labelText, searchQuery);
       } else {
         label.textContent = labelText;
+      }
+      if (t.fromServer && !isLive) {
+        const tag = document.createElement("span");
+        tag.className = "h-server-tag";
+        tag.title = "Loaded from server history";
+        tag.textContent = "saved";
+        label.appendChild(tag);
       }
       const time = document.createElement("div");
       time.className = "h-time";
@@ -435,7 +445,7 @@
         li.appendChild(delBtn);
       }
       li.appendChild(label); li.appendChild(time);
-      li.addEventListener("click", () => viewTopic(t.id));
+      li.addEventListener("click", () => _loadAndViewTopic(t.id));
       historyListEl.appendChild(li);
     }
   }
@@ -465,6 +475,27 @@
     updateHistoryModeUi(); renderViewedTopic(); renderHistoryList();
   }
 
+  async function _loadAndViewTopic(id) {
+    const t = getTopic(id);
+    if (!t) return;
+    if (t.fromServer && t.serverId && t.lines.length === 0) {
+      try {
+        const res = await fetch(`/history/${encodeURIComponent(t.serverId)}`);
+        if (res.ok) {
+          const data = await res.json();
+          t.lines = Array.isArray(data.lines)
+            ? data.lines.map((l) => ({ ts: l.ts, text: l.text }))
+            : [];
+          t.entities = data.entities && typeof data.entities === "object" ? data.entities : {};
+          t.crm = data.crm && typeof data.crm === "object" ? data.crm : {};
+        }
+      } catch (e) {
+        console.warn("Could not load meeting details from server:", e);
+      }
+    }
+    viewTopic(id);
+  }
+
   function backToLive() {
     viewingId = null;
     updateHistoryModeUi(); renderViewedTopic(); renderHistoryList();
@@ -477,6 +508,7 @@
     if (!confirm(`Delete "${label}" from history? This cannot be undone.`)) return;
     const idx = topics.findIndex((t) => t.id === id);
     if (idx === -1) return;
+    const serverId = t && t.serverId ? t.serverId : null;
     topics.splice(idx, 1);
     if (viewingId === id) {
       viewingId = null;
@@ -485,12 +517,18 @@
     persistTopics();
     renderHistoryList();
     renderViewedTopic();
+    if (serverId) {
+      fetch(`/history/${encodeURIComponent(serverId)}`, { method: "DELETE" }).catch((e) => {
+        console.warn("Could not delete meeting from server:", e);
+      });
+    }
   }
 
   function clearAllHistory() {
-    const pastCount = topics.filter((t) => t.id !== currentId).length;
-    if (pastCount === 0) return;
-    if (!confirm(`Clear ${pastCount} past topic(s) from history? This cannot be undone.`)) return;
+    const pastTopics = topics.filter((t) => t.id !== currentId);
+    if (pastTopics.length === 0) return;
+    if (!confirm(`Clear ${pastTopics.length} past topic(s) from history? This cannot be undone.`)) return;
+    const serverIds = pastTopics.map((t) => t.serverId).filter(Boolean);
     const live = currentId != null ? getTopic(currentId) : null;
     topics.length = 0;
     if (live) topics.push(live);
@@ -499,6 +537,11 @@
     updateHistoryModeUi();
     renderHistoryList();
     renderViewedTopic();
+    for (const sid of serverIds) {
+      fetch(`/history/${encodeURIComponent(sid)}`, { method: "DELETE" }).catch((e) => {
+        console.warn("Could not delete server meeting during clear:", e);
+      });
+    }
   }
 
   backToLiveBtn.addEventListener("click", backToLive);
@@ -634,7 +677,7 @@
     }
   });
 
-  function startNewTopic(label, ts) {
+  function startNewTopic(label, ts, serverId) {
     if (!currentSessionId) currentSessionId = Date.now() / 1000;
     const topic = {
       id: nextId++,
@@ -642,6 +685,8 @@
       startedAt: ts || Date.now() / 1000,
       sessionId: currentSessionId,
       lines: [], entities: {}, crm: {},
+      serverId: serverId || null,
+      fromServer: false,
     };
     topics.push(topic);
     currentId = topic.id;
@@ -1061,7 +1106,7 @@
     }
 
     if (evt.type === "topic_shift") {
-      startNewTopic(evt.label, evt.ts);
+      startNewTopic(evt.label, evt.ts, evt.meeting_id || null);
       viewingId = null;
       updateHistoryModeUi(); renderViewedTopic(); renderHistoryList();
       flashTopic();
@@ -1157,9 +1202,43 @@
     };
   }
 
+  async function loadServerHistory() {
+    try {
+      const res = await fetch("/history");
+      if (!res.ok) return;
+      const meetings = await res.json();
+      if (!Array.isArray(meetings) || meetings.length === 0) return;
+      const knownServerIds = new Set(topics.map((t) => t.serverId).filter(Boolean));
+      let added = 0;
+      for (const m of meetings) {
+        if (!m || !m.id) continue;
+        if (knownServerIds.has(m.id)) continue;
+        const stub = normalizeTopic({
+          label: m.label || "Untitled topic",
+          startedAt: m.started_at,
+          sessionId: m.session_id,
+          lines: [],
+          entities: {},
+          crm: {},
+          serverId: m.id,
+          fromServer: true,
+        });
+        topics.push(stub);
+        added++;
+      }
+      if (added > 0) {
+        topics.sort((a, b) => a.startedAt - b.startedAt);
+        renderHistoryList();
+      }
+    } catch (e) {
+      console.warn("Could not load server history:", e);
+    }
+  }
+
   loadPersistedTopics();
   renderHistoryList();
   updateHistoryModeUi();
   loadSettings();
+  loadServerHistory();
   connect();
 })();

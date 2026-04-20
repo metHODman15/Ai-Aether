@@ -411,6 +411,21 @@ mark.search-hit-current {
 }
 .history-list li:hover .h-delete-btn { opacity: 1; }
 .history-list .h-delete-btn:hover { color: var(--bad); }
+.history-list .h-server-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: rgba(56,189,248,0.12);
+  border: 1px solid rgba(56,189,248,0.25);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  vertical-align: middle;
+  text-transform: uppercase;
+}
+.history-list li.from-server { border-color: rgba(56,189,248,0.15); }
 
 body.history-mode .transcript,
 body.history-mode .entities-panel,

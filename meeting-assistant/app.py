@@ -14,6 +14,7 @@ import os
 import sys
 import tempfile
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from backend.document_parser import parse_document
 from backend.entities import EntityExtractor
 from backend.hub import ConnectionHub
 from backend.salesforce_client import SalesforceClient
+from backend.store import MeetingStore
 from backend.topic_state import TopicState
 from backend.transcribe import Transcriber
 
@@ -221,9 +223,25 @@ async def pipeline_loop(
     sf_client: SalesforceClient,
     hub: ConnectionHub,
     settings: Settings,
+    store: MeetingStore,
+    session_id: float,
 ) -> None:
     """Continuously capture, transcribe, evaluate context, query, broadcast."""
     topic = TopicState()
+    current_meeting_id: str | None = None
+
+    async def _save_meeting(meeting_id: str, label: str, started_at: float, summary: str) -> None:
+        try:
+            await store.create_meeting(
+                meeting_id=meeting_id,
+                started_at=started_at,
+                session_id=session_id,
+                label=label,
+                summary=summary,
+            )
+        except Exception as exc:
+            logger.warning("Could not persist meeting record: %s", exc)
+
     try:
         while True:
             async for chunk in microphone_chunks(
@@ -269,11 +287,16 @@ async def pipeline_loop(
                         topic.summary = decision["summary"] or topic.summary
 
                 if shifted:
+                    current_meeting_id = str(uuid.uuid4())
+                    await _save_meeting(
+                        current_meeting_id, topic.label, topic.started_at, topic.summary
+                    )
                     await hub.broadcast({
                         "type": "topic_shift",
                         "ts": ts,
                         "label": topic.label,
                         "summary": topic.summary,
+                        "meeting_id": current_meeting_id,
                     })
 
                 await hub.broadcast({
@@ -282,6 +305,12 @@ async def pipeline_loop(
                     "text": transcript,
                     "topic_label": topic.label,
                 })
+
+                if current_meeting_id:
+                    try:
+                        await store.append_transcript(current_meeting_id, ts, transcript)
+                    except Exception as exc:
+                        logger.warning("Could not save transcript line: %s", exc)
 
                 # Step 2: Extract entities for Salesforce lookup.
                 try:
@@ -301,6 +330,12 @@ async def pipeline_loop(
                     "topic_label": topic.label,
                 })
 
+                if current_meeting_id and entities_changed:
+                    try:
+                        await store.upsert_entities(current_meeting_id, dict(topic.entities))
+                    except Exception as exc:
+                        logger.warning("Could not save entities: %s", exc)
+
                 if not should_query:
                     continue
 
@@ -319,6 +354,13 @@ async def pipeline_loop(
                     "data": crm,
                     "topic_label": topic.label,
                 })
+
+                if current_meeting_id:
+                    try:
+                        await store.upsert_crm(current_meeting_id, crm)
+                    except Exception as exc:
+                        logger.warning("Could not save CRM data: %s", exc)
+
     except asyncio.CancelledError:
         logger.info("Pipeline stopped")
         raise
@@ -329,6 +371,7 @@ async def pipeline_loop(
 
 def build_app(config: Config) -> FastAPI:
     hub = ConnectionHub()
+    store = MeetingStore()
     persisted = _load_persisted_settings(config.audio_chunk_seconds, config.audio_sample_rate)
     settings = Settings(
         sensitivity=persisted["sensitivity"],
@@ -348,9 +391,11 @@ def build_app(config: Config) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         _cleanup_stale_temp_files()
+        session_id = time.time()
         task = asyncio.create_task(
             pipeline_loop(
-                config, transcriber, context_mgr, extractor, sf_client, hub, settings
+                config, transcriber, context_mgr, extractor, sf_client, hub, settings,
+                store, session_id,
             )
         )
         try:
@@ -440,6 +485,29 @@ def build_app(config: Config) -> FastAPI:
         logger.info("Audio sample rate set to %d Hz", value)
         await hub.broadcast({"type": "settings", "audio_sample_rate": value})
         return JSONResponse({"audio_sample_rate": settings.audio_sample_rate})
+
+    @app.get("/history")
+    async def list_history():
+        """Return a list of all saved meeting summaries, newest first."""
+        meetings = await store.list_meetings()
+        return JSONResponse(meetings)
+
+    @app.get("/history/{meeting_id}")
+    async def get_history_meeting(meeting_id: str):
+        """Return full data for a saved meeting (transcript, entities, CRM)."""
+        meeting = await store.get_meeting(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        return JSONResponse(meeting)
+
+    @app.delete("/history/{meeting_id}")
+    async def delete_history_meeting(meeting_id: str):
+        """Delete a saved meeting from history."""
+        meeting = await store.get_meeting(meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        await store.delete_meeting(meeting_id)
+        return JSONResponse({"status": "deleted"})
 
     MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 
