@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -76,9 +78,27 @@ def _load_persisted_settings(config_chunk_seconds: float) -> dict:
 
 
 def _save_persisted_settings(data: dict) -> None:
-    """Write user settings to disk so they survive restarts."""
+    """Write user settings to disk so they survive restarts.
+
+    Uses an atomic write: the JSON is written to a temporary file in the same
+    directory, then renamed over the real file.  Because rename(2) is atomic on
+    POSIX systems, a crash or full-disk error mid-write can never leave
+    user_settings.json in a truncated or empty state.
+    """
     try:
-        SETTINGS_FILE.write_text(json.dumps(data))
+        dir_ = SETTINGS_FILE.parent
+        dir_.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=dir_, prefix=".settings_tmp_")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                json.dump(data, fh)
+            os.replace(tmp_path, SETTINGS_FILE)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     except OSError as exc:
         logger.warning("Could not save settings: %s", exc)
 
