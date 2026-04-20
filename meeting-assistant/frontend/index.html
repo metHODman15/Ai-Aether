@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meeting Assistant</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>Meeting Assistant</h1>
+      <div id="topic" class="topic-badge">
+        <span class="topic-dot"></span>
+        <span class="topic-label">Waiting for first topic…</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <button id="demoBtn" class="demo-btn" type="button">Try Demo</button>
+      <button id="uploadBtn" class="upload-btn" type="button">Upload Minutes</button>
+      <input id="uploadInput" type="file" hidden accept=".pdf,.docx,.txt" />
+      <label class="sensitivity">
+        <span class="sensitivity-label">Topic-shift sensitivity</span>
+        <select id="sensitivity">
+          <option value="conservative">Conservative</option>
+          <option value="balanced" selected>Balanced</option>
+          <option value="aggressive">Aggressive</option>
+        </select>
+      </label>
+      <label class="sensitivity">
+        <span class="sensitivity-label">Audio chunk (seconds)</span>
+        <input id="audioChunkSeconds" type="number" min="1" max="30" step="1" value="5" />
+      </label>
+      <label class="sensitivity">
+        <span class="sensitivity-label">Sample rate (Hz)</span>
+        <select id="audioSampleRate">
+          <option value="8000">8,000 Hz</option>
+          <option value="16000" selected>16,000 Hz</option>
+          <option value="44100">44,100 Hz</option>
+        </select>
+      </label>
+      <div id="status" class="status disconnected">Disconnected</div>
+    </div>
+  </header>
+
+  <div id="demoBanner" class="demo-banner">
+    <div class="demo-banner-inner">
+      <div class="demo-banner-text">
+        <strong>No backend connected.</strong>
+        Try Demo Mode to explore all features — live transcript, topic shifts, CRM charts, and document analysis.
+      </div>
+      <button id="demoOverlayBtn" class="demo-banner-btn" type="button">&#9654; Start Demo</button>
+    </div>
+  </div>
+
+  <main id="liveView">
+    <section class="panel history-panel">
+      <div class="history-header">
+        <h2>History</h2>
+        <button id="clearHistoryBtn" type="button" class="clear-history-btn" title="Clear all history">Clear history</button>
+      </div>
+      <div class="history-search">
+        <input
+          id="historySearch"
+          type="search"
+          placeholder="Search topics, transcript, or entities…"
+          autocomplete="off"
+        />
+      </div>
+      <div id="historyMode" class="history-mode-banner" hidden>
+        <span>Viewing past topic (read-only)</span>
+        <button id="backToLive" type="button">Back to live</button>
+      </div>
+      <ul id="historyList" class="history-list">
+        <li class="empty">No topics yet</li>
+      </ul>
+    </section>
+
+    <section class="panel transcript-panel">
+      <div class="transcript-header">
+        <h2>Live Transcript</h2>
+        <div id="searchNav" class="search-nav" hidden>
+          <button id="searchPrev" type="button" aria-label="Previous match">&#8593;</button>
+          <span id="searchCount" class="search-count"></span>
+          <button id="searchNext" type="button" aria-label="Next match">&#8595;</button>
+        </div>
+      </div>
+      <div id="transcript" class="transcript">
+        <div class="empty-state">Listening…</div>
+      </div>
+    </section>
+
+    <section class="panel entities-panel">
+      <h2>Extracted Entities</h2>
+      <dl id="entities" class="entities">
+        <dt>Customer</dt><dd data-field="customer_name">—</dd>
+        <dt>Contact</dt><dd data-field="contact_name">—</dd>
+        <dt>Deal Amount</dt><dd data-field="deal_amount">—</dd>
+        <dt>Stage</dt><dd data-field="deal_stage">—</dd>
+        <dt>Keywords</dt><dd data-field="keywords">—</dd>
+      </dl>
+    </section>
+
+    <section class="panel chart-panel">
+      <h2>Opportunity Stages</h2>
+      <canvas id="stagePie"></canvas>
+    </section>
+
+    <section class="panel chart-panel">
+      <h2>Deal Amounts Over Time</h2>
+      <canvas id="amountLine"></canvas>
+    </section>
+
+    <section class="panel records-panel">
+      <h2>Salesforce Records</h2>
+      <div class="records-grid">
+        <div>
+          <h3>Accounts</h3>
+          <ul id="accounts" class="record-list"><li class="empty">No matches yet</li></ul>
+        </div>
+        <div>
+          <h3>Opportunities</h3>
+          <ul id="opportunities" class="record-list"><li class="empty">No matches yet</li></ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="docView" class="doc-view" hidden>
+    <div class="doc-view-header">
+      <div class="doc-view-title">
+        <span id="docTitle">Document</span>
+        <span id="docProgressLabel" class="doc-progress-label"></span>
+      </div>
+      <div class="doc-progress-bar-wrap">
+        <div id="docProgressBar" class="doc-progress-bar" style="width:0%"></div>
+      </div>
+      <button id="docDownloadCsv" type="button" hidden>&#8595; Download CSV</button>
+      <button id="docBackToLive" type="button">&#8592; Back to Live</button>
+    </div>
+    <div class="doc-search-bar">
+      <input id="docSearch" type="search" placeholder="Search units by text, entity, or Salesforce record…" autocomplete="off" />
+      <select id="docStageFilter" class="doc-field-filter" title="Filter by deal stage">
+        <option value="">All stages</option>
+      </select>
+      <input id="docCustomerFilter" type="search" class="doc-field-filter doc-customer-filter" placeholder="Customer…" autocomplete="off" />
+      <span id="docUnitCount" class="doc-unit-count"></span>
+    </div>
+    <div id="docSummary" class="doc-summary" hidden>
+      <div class="doc-summary-header">
+        <span class="doc-summary-icon">&#9733;</span>
+        Deal Summary
+      </div>
+      <div id="docSummaryBody" class="doc-summary-body"></div>
+    </div>
+    <div id="docUnits" class="doc-units"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
