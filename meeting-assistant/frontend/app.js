@@ -76,16 +76,59 @@
   });
 
   const MAX_HISTORY = 10;
+  const MAX_ARCHIVE = 2000;
   const MAX_LINES_PER_TOPIC = 200;
+  const STORAGE_KEY = "meetingAssistant_topics";
   const topics = [];
   let currentId = null;
   let viewingId = null;
   let nextId = 1;
+  let _saveTimer = null;
 
   function getTopic(id) { return topics.find((t) => t.id === id) || null; }
   function currentTopic() { return getTopic(currentId); }
   function viewedTopic() { return getTopic(viewingId != null ? viewingId : currentId); }
   function isViewingLive() { return viewingId == null || viewingId === currentId; }
+
+  function scheduleSave() {
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(persistTopics, 1500);
+  }
+
+  function persistTopics() {
+    try {
+      const toStore = topics.slice(-MAX_ARCHIVE);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ nextId, topics: toStore }));
+    } catch (e) {
+      console.warn("Could not persist topics to localStorage:", e);
+    }
+  }
+
+  function normalizeTopic(t) {
+    return {
+      id: typeof t.id === "number" ? t.id : nextId++,
+      label: typeof t.label === "string" ? t.label : "Untitled topic",
+      startedAt: typeof t.startedAt === "number" ? t.startedAt : Date.now() / 1000,
+      lines: Array.isArray(t.lines) ? t.lines : [],
+      entities: t.entities && typeof t.entities === "object" ? t.entities : {},
+      crm: t.crm && typeof t.crm === "object" ? t.crm : {},
+    };
+  }
+
+  function loadPersistedTopics() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (!Array.isArray(data.topics)) return;
+      for (const t of data.topics) {
+        if (t && typeof t === "object") topics.push(normalizeTopic(t));
+      }
+      if (typeof data.nextId === "number" && data.nextId > nextId) nextId = data.nextId;
+    } catch (e) {
+      console.warn("Could not restore topics from localStorage:", e);
+    }
+  }
 
   function setStatus(connected) {
     statusEl.textContent = connected ? "Connected" : "Disconnected";
@@ -312,11 +355,19 @@
       li.className = "empty"; li.textContent = "No topics yet";
       historyListEl.appendChild(li); return;
     }
-    const ordered = topics.slice().reverse().filter((t) => topicMatchesQuery(t, searchQuery));
+    const reversed = topics.slice().reverse();
+    const pool = searchQuery ? reversed : reversed.slice(0, MAX_HISTORY);
+    const ordered = pool.filter((t) => topicMatchesQuery(t, searchQuery));
     if (ordered.length === 0) {
       const li = document.createElement("li");
       li.className = "empty"; li.textContent = "No topics match your search";
       historyListEl.appendChild(li); return;
+    }
+    if (searchQuery && topics.length > MAX_HISTORY) {
+      const info = document.createElement("li");
+      info.className = "search-scope-note";
+      info.textContent = `Searching all ${topics.length} topics`;
+      historyListEl.appendChild(info);
     }
     for (const t of ordered) {
       const li = document.createElement("li");
@@ -423,8 +474,8 @@
       lines: [], entities: {}, crm: {},
     };
     topics.push(topic);
-    while (topics.length > MAX_HISTORY) topics.shift();
     currentId = topic.id;
+    scheduleSave();
     return topic;
   }
 
@@ -665,6 +716,7 @@
         if (searchQuery) refreshSearchHitsQuiet();
       }
       if (searchQuery) renderHistoryList();
+      scheduleSave();
       return;
     }
 
@@ -675,6 +727,7 @@
       t.entities = evt.entities || {};
       if (isViewingLive()) renderEntities(t.entities);
       if (searchQuery) renderHistoryList();
+      scheduleSave();
       return;
     }
 
@@ -684,6 +737,7 @@
       if (evt.topic_label && evt.topic_label !== t.label) return;
       t.crm = evt.data || {};
       if (isViewingLive()) renderCrm(t.crm);
+      scheduleSave();
       return;
     }
 
@@ -703,6 +757,7 @@
         if (t.lines.length > MAX_LINES_PER_TOPIC) {
           t.lines.splice(0, t.lines.length - MAX_LINES_PER_TOPIC);
         }
+        scheduleSave();
       }
       if (isViewingLive()) {
         const placeholder = transcriptEl.querySelector(".empty-state");
@@ -729,6 +784,7 @@
     };
   }
 
+  loadPersistedTopics();
   renderHistoryList();
   updateHistoryModeUi();
   loadSensitivity();

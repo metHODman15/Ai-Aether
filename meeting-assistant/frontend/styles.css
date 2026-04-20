@@ -305,6 +305,16 @@ mark.search-hit-current {
 }
 .history-list li.empty { color: var(--muted); font-style: italic; background: transparent; cursor: default; }
 .history-list li.empty:hover { border-color: transparent; }
+.history-list li.search-scope-note {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+  background: transparent;
+  cursor: default;
+  border-color: transparent;
+  padding: 4px 8px;
+}
+.history-list li.search-scope-note:hover { border-color: transparent; }
 .history-list .h-label { font-weight: 600; word-break: break-word; }
 .history-list .h-time { color: var(--muted); font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 
