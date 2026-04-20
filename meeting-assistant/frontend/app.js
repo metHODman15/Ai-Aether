@@ -10,6 +10,8 @@
   const historyModeEl = document.getElementById("historyMode");
   const backToLiveBtn = document.getElementById("backToLive");
   const sensitivityEl = document.getElementById("sensitivity");
+  const historySearchEl = document.getElementById("historySearch");
+  let searchQuery = "";
 
   const PALETTE = [
     "#38bdf8", "#a78bfa", "#f472b6", "#fb923c",
@@ -186,6 +188,48 @@
     amountLine.update();
   }
 
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function escapeRegExp(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function highlightHtml(text, query) {
+    const safe = escapeHtml(text);
+    if (!query) return safe;
+    const re = new RegExp(escapeRegExp(query), "gi");
+    return safe.replace(re, (m) => `<mark class="search-hit">${m}</mark>`);
+  }
+
+  function entityValuesText(entities) {
+    const e = entities || {};
+    const parts = [];
+    if (e.customer_name) parts.push(e.customer_name);
+    if (e.contact_name) parts.push(e.contact_name);
+    if (e.deal_stage) parts.push(e.deal_stage);
+    if (e.deal_amount != null) parts.push(String(e.deal_amount));
+    if (Array.isArray(e.keywords)) parts.push(e.keywords.join(" "));
+    return parts.join(" ");
+  }
+
+  function topicMatchesQuery(t, q) {
+    if (!q) return true;
+    const needle = q.toLowerCase();
+    if ((t.label || "").toLowerCase().includes(needle)) return true;
+    if (entityValuesText(t.entities).toLowerCase().includes(needle)) return true;
+    for (const line of t.lines || []) {
+      if ((line.text || "").toLowerCase().includes(needle)) return true;
+    }
+    return false;
+  }
+
   function renderTranscriptLines(lines, headerLabel, headerNote) {
     transcriptEl.innerHTML = "";
     if (headerLabel) {
@@ -212,6 +256,16 @@
           appendTranscriptLine(line.text, line.ts);
         }
       }
+      if (searchQuery) {
+        const needle = searchQuery.toLowerCase();
+        const firstHit = Array.from(
+          transcriptEl.querySelectorAll(".line:not(.error) .text")
+        ).find((el) => el.textContent.toLowerCase().includes(needle));
+        if (firstHit) {
+          firstHit.scrollIntoView({ block: "center" });
+          return;
+        }
+      }
     }
     transcriptEl.scrollTop = transcriptEl.scrollHeight;
   }
@@ -224,7 +278,12 @@
     line.className = "line";
     line.innerHTML = `<span class="ts"></span><span class="text"></span>`;
     line.querySelector(".ts").textContent = time;
-    line.querySelector(".text").textContent = text;
+    const textEl = line.querySelector(".text");
+    if (searchQuery && text.toLowerCase().includes(searchQuery.toLowerCase())) {
+      textEl.innerHTML = highlightHtml(text, searchQuery);
+    } else {
+      textEl.textContent = text;
+    }
     transcriptEl.appendChild(line);
     transcriptEl.scrollTop = transcriptEl.scrollHeight;
   }
@@ -239,7 +298,17 @@
       return;
     }
     // newest first
-    const ordered = topics.slice().reverse();
+    const ordered = topics
+      .slice()
+      .reverse()
+      .filter((t) => topicMatchesQuery(t, searchQuery));
+    if (ordered.length === 0) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "No topics match your search";
+      historyListEl.appendChild(li);
+      return;
+    }
     for (const t of ordered) {
       const li = document.createElement("li");
       const isLive = t.id === currentId;
@@ -248,7 +317,12 @@
       if (isActive) li.classList.add("active");
       const label = document.createElement("div");
       label.className = "h-label";
-      label.textContent = t.label || "Untitled topic";
+      const labelText = t.label || "Untitled topic";
+      if (searchQuery && labelText.toLowerCase().includes(searchQuery.toLowerCase())) {
+        label.innerHTML = highlightHtml(labelText, searchQuery);
+      } else {
+        label.textContent = labelText;
+      }
       const time = document.createElement("div");
       time.className = "h-time";
       time.textContent = new Date(t.startedAt * 1000).toLocaleTimeString();
@@ -304,6 +378,12 @@
   }
 
   backToLiveBtn.addEventListener("click", backToLive);
+
+  historySearchEl.addEventListener("input", () => {
+    searchQuery = historySearchEl.value.trim();
+    renderHistoryList();
+    renderViewedTopic();
+  });
 
   async function loadSensitivity() {
     try {
@@ -379,6 +459,7 @@
         t.lines.splice(0, t.lines.length - MAX_LINES_PER_TOPIC);
       }
       if (isViewingLive()) appendTranscriptLine(evt.text, evt.ts);
+      if (searchQuery) renderHistoryList();
       return;
     }
 
@@ -388,6 +469,7 @@
       if (evt.topic_label && evt.topic_label !== t.label) return;
       t.entities = evt.entities || {};
       if (isViewingLive()) renderEntities(t.entities);
+      if (searchQuery) renderHistoryList();
       return;
     }
 

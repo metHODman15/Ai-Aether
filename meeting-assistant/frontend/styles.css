@@ -197,6 +197,30 @@ main {
 }
 .history-mode-banner button:hover { filter: brightness(1.1); }
 
+.history-search {
+  margin-bottom: 10px;
+}
+.history-search input {
+  width: 100%;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  outline: none;
+}
+.history-search input:focus {
+  border-color: var(--accent);
+}
+
+mark.search-hit {
+  background: rgba(250,204,21,0.45);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 .history-list {
   list-style: none;
   padding: 0;
