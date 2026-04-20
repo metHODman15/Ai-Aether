@@ -25,6 +25,8 @@
   const docProgressLabelEl = document.getElementById("docProgressLabel");
   const docProgressBarEl = document.getElementById("docProgressBar");
   const docBackToLiveBtn = document.getElementById("docBackToLive");
+  const docSearchEl = document.getElementById("docSearch");
+  const docUnitCountEl = document.getElementById("docUnitCount");
   const uploadBtn = document.getElementById("uploadBtn");
   const uploadInput = document.getElementById("uploadInput");
 
@@ -539,9 +541,27 @@
     docTitleEl.textContent = filename;
     docProgressLabelEl.textContent = "Processing…";
     docProgressBarEl.style.width = "0%";
+    docSearchEl.value = "";
+    docUnitCountEl.textContent = "";
     liveViewEl.hidden = true;
     docViewEl.hidden = false;
   }
+
+  function applyDocFilter() {
+    const q = docSearchEl.value.trim().toLowerCase();
+    const cards = docUnitsEl.querySelectorAll(".doc-unit-card");
+    let visible = 0;
+    for (const card of cards) {
+      const haystack = (card.dataset.search || "").toLowerCase();
+      const match = q === "" || haystack.includes(q);
+      card.hidden = !match;
+      if (match) visible++;
+    }
+    const total = cards.length;
+    docUnitCountEl.textContent = total > 0 ? `${visible} of ${total} unit${total !== 1 ? "s" : ""}` : "";
+  }
+
+  docSearchEl.addEventListener("input", applyDocFilter);
 
   function exitDocMode() {
     liveViewEl.hidden = false;
@@ -644,7 +664,24 @@
     }
     recordsDiv.appendChild(oppList);
     card.appendChild(recordsDiv);
+
+    const searchParts = [
+      evt.text || "",
+      entities.customer_name || "",
+      entities.contact_name || "",
+      entities.deal_stage || "",
+      (entities.keywords || []).join(" "),
+      ...(crm.accounts || []).map((a) => [a.Name, a.Industry, a.Type].filter(Boolean).join(" ")),
+      ...(crm.opportunities || []).map((o) => [
+        o.Name,
+        o.StageName,
+        o.Account && o.Account.Name ? o.Account.Name : "",
+      ].filter(Boolean).join(" ")),
+    ];
+    card.dataset.search = searchParts.join(" ");
+
     docUnitsEl.appendChild(card);
+    applyDocFilter();
 
     const dist = crm.stage_distribution || [];
     const pieChart = new Chart(pieCanvas, {
@@ -683,7 +720,7 @@
     });
     docChartInstances.push(lineChart);
 
-    card.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (!card.hidden) card.scrollIntoView({ behavior: "smooth", block: "end" });
   }
 
   function appendDocUnitError(evt) {
@@ -692,7 +729,9 @@
     card.innerHTML =
       `<div class="doc-unit-header">Unit ${evt.unit_index + 1} — Error</div>` +
       `<div class="doc-unit-text">${escapeHtml(evt.message || "Unknown error")}</div>`;
+    card.dataset.search = evt.message || "";
     docUnitsEl.appendChild(card);
+    applyDocFilter();
   }
 
   // ── WebSocket event handler ───────────────────────────────────────────────
