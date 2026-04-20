@@ -376,6 +376,18 @@ def build_app(config: Config) -> FastAPI:
 
         return JSONResponse({"status": "ok", "filename": filename, "total_units": total})
 
+    @app.post("/summarise")
+    async def summarise_document(payload: dict):
+        units = (payload or {}).get("units", [])
+        if not isinstance(units, list):
+            raise HTTPException(status_code=400, detail="'units' must be a list")
+        try:
+            summary = await context_mgr.summarise_document(units)
+        except Exception as exc:
+            logger.exception("Summarisation failed: %s", exc)
+            raise HTTPException(status_code=500, detail="Summarisation failed. Please try again.")
+        return JSONResponse({"summary": summary})
+
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
         await hub.connect(ws)

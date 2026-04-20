@@ -29,8 +29,11 @@
   const docUnitCountEl = document.getElementById("docUnitCount");
   const uploadBtn = document.getElementById("uploadBtn");
   const uploadInput = document.getElementById("uploadInput");
+  const docSummaryEl = document.getElementById("docSummary");
+  const docSummaryBodyEl = document.getElementById("docSummaryBody");
 
   let searchQuery = "";
+  let docUnitsData = [];
   let searchHits = [];
   let currentHitIndex = -1;
   let docChartInstances = [];
@@ -538,6 +541,9 @@
     for (const ch of docChartInstances) { try { ch.destroy(); } catch (_) {} }
     docChartInstances = [];
     docUnitsEl.innerHTML = "";
+    docUnitsData = [];
+    docSummaryEl.hidden = true;
+    docSummaryBodyEl.innerHTML = "";
     docTitleEl.textContent = filename;
     docProgressLabelEl.textContent = "Processing…";
     docProgressBarEl.style.width = "0%";
@@ -574,6 +580,45 @@
     errEl.textContent = `Error: ${msg}`;
     docUnitsEl.prepend(errEl);
     docProgressLabelEl.textContent = "Failed";
+  }
+
+  async function requestDocSummary(units) {
+    docSummaryBodyEl.innerHTML = '<span class="doc-summary-loading">Generating summary\u2026</span>';
+    docSummaryEl.hidden = false;
+    docSummaryEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    try {
+      const res = await fetch("/summarise", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ units }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const text = (data.summary || "").trim();
+      docSummaryBodyEl.innerHTML = "";
+      if (!text) {
+        const p = document.createElement("p");
+        p.className = "doc-summary-empty";
+        p.textContent = "No summary available.";
+        docSummaryBodyEl.appendChild(p);
+      } else {
+        const ul = document.createElement("ul");
+        ul.className = "doc-summary-list";
+        for (const raw of text.split("\n")) {
+          const line = raw.replace(/^[•\-\*]\s*/, "").trim();
+          if (!line) continue;
+          const li = document.createElement("li");
+          li.textContent = line;
+          ul.appendChild(li);
+        }
+        docSummaryBodyEl.appendChild(ul);
+      }
+    } catch (e) {
+      docSummaryBodyEl.innerHTML = `<span class="doc-summary-error">Summary unavailable: ${escapeHtml(String(e))}</span>`;
+    }
   }
 
   function appendDocUnit(evt) {
@@ -745,6 +790,7 @@
     }
 
     if (evt.type === "document_unit") {
+      docUnitsData.push({ entities: evt.entities || {}, crm: evt.crm || {} });
       appendDocUnit(evt);
       const pct = Math.round((evt.unit_index + 1) / evt.total_units * 100);
       docProgressBarEl.style.width = `${pct}%`;
@@ -760,6 +806,7 @@
     if (evt.type === "document_done") {
       docProgressLabelEl.textContent = `Done — ${evt.processed} of ${evt.total_units} processed`;
       docProgressBarEl.style.width = "100%";
+      requestDocSummary(docUnitsData.slice());
       return;
     }
 
