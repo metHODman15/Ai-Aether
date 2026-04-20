@@ -153,6 +153,35 @@ def _save_persisted_settings(data: dict) -> None:
         logger.warning("Could not save settings: %s", exc)
 
 
+_STALE_TMP_AGE_SECONDS = 3600  # 1 hour
+
+
+def _cleanup_stale_temp_files() -> None:
+    """Remove orphaned .settings_tmp_* files left by a previously crashed save.
+
+    The atomic-save routine writes to a temp file then renames it over the
+    real settings file.  If the process is killed between those two steps the
+    temp file is never cleaned up.  On startup we scan the settings directory
+    and delete any such files that are old enough to be certain they are not
+    owned by a concurrently running save (we use a 1-hour threshold so a
+    normally completed rename always wins the race).
+    """
+    settings_dir = SETTINGS_FILE.parent
+    try:
+        candidates = list(settings_dir.glob(".settings_tmp_*"))
+    except OSError:
+        return
+
+    cutoff = time.time() - _STALE_TMP_AGE_SECONDS
+    for path in candidates:
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                logger.info("Removed stale settings temp file: %s", path)
+        except OSError:
+            pass
+
+
 class Settings:
     """Mutable runtime settings adjustable from the dashboard."""
 
@@ -301,6 +330,7 @@ def build_app(config: Config) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        _cleanup_stale_temp_files()
         task = asyncio.create_task(
             pipeline_loop(
                 config, transcriber, context_mgr, extractor, sf_client, hub, settings
