@@ -83,20 +83,20 @@
 
   ```bash
   git clone https://github.com/metHODman15/Ai-Aether.git
-  cd Ai-Aether/meeting-assistant
+  cd Ai-Aether
 
   # Create and activate a virtual environment (recommended)
-  python -m venv .venv
+  python3 -m venv .venv
   source .venv/bin/activate          # macOS / Linux
   # .venv\Scripts\Activate.ps1      # Windows PowerShell
 
-  pip install -r requirements.txt
+  pip install -r meeting-assistant/requirements.txt
 
   # Copy the environment template and fill in your credentials
-  cp .env.example .env
+  cp meeting-assistant/.env.example meeting-assistant/.env
   ```
 
-  Open `.env` in any text editor and add your keys (see [Environment Variables](#environment-variables) below).
+  Open `meeting-assistant/.env` in any text editor and add your keys (see [Environment Variables](#environment-variables) below).
 
   ---
 
@@ -126,11 +126,11 @@
   ## Running the App
 
   ```bash
-  # Make sure your virtual environment is active
+  # Make sure your virtual environment is active (run from Ai-Aether root)
   source .venv/bin/activate          # macOS / Linux
   # .venv\Scripts\Activate.ps1      # Windows
 
-  python app.py
+  python3 meeting-assistant/app.py
   ```
 
   Open **<http://127.0.0.1:8000>** in your browser.  
