@@ -25,7 +25,7 @@ def _optional(name: str, default: str) -> str:
 
 @dataclass(frozen=True)
 class Config:
-    openai_api_key: str
+    openai_api_key: str | None
     anthropic_api_key: str
     sf_username: str
     sf_password: str
@@ -50,9 +50,8 @@ class Config:
                 f"Choose one of: {', '.join(_VALID_BACKENDS)}."
             )
 
-        # OPENAI_API_KEY is always required: entity extraction uses it regardless
-        # of which transcription backend is selected.
-        openai_api_key = _require("OPENAI_API_KEY")
+        # OPENAI_API_KEY is no longer required — entity extraction uses Claude.
+        openai_api_key = os.getenv("OPENAI_API_KEY") or None
 
         return cls(
             openai_api_key=openai_api_key,

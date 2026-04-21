@@ -1,7 +1,7 @@
 """Real-time meeting assistant entry point.
 
 Captures microphone audio, transcribes it with Whisper, uses Claude
-purely to detect topic shifts, extracts CRM entities with OpenAI,
+to detect topic shifts and extract CRM entities,
 queries Salesforce, and broadcasts everything to a local browser
 dashboard via WebSockets.
 """
@@ -387,7 +387,7 @@ def build_app(config: Config) -> FastAPI:
         local_compute_type=config.local_whisper_compute_type,
     )
     context_mgr = ContextManager(api_key=config.anthropic_api_key)
-    extractor = EntityExtractor(api_key=config.openai_api_key)
+    extractor = EntityExtractor(api_key=config.anthropic_api_key)
     sf_client = SalesforceClient(
         username=config.sf_username,
         password=config.sf_password,

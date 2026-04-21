@@ -1,8 +1,4 @@
-"""Extract CRM-relevant entities from transcript text using OpenAI.
-
-Claude is reserved for context management (see backend/context.py),
-so entity extraction runs against an OpenAI chat model in JSON mode.
-"""
+"""Extract CRM-relevant entities from transcript text using Anthropic Claude."""
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +7,7 @@ import logging
 import re
 from typing import TypedDict
 
-from openai import OpenAI, OpenAIError
+import anthropic
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +50,8 @@ def _empty() -> Entities:
 
 
 class EntityExtractor:
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
-        self._client = OpenAI(api_key=api_key)
+    def __init__(self, api_key: str, model: str = "claude-haiku-4-5"):
+        self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model
 
     async def extract(self, transcript: str) -> Entities:
@@ -65,20 +61,16 @@ class EntityExtractor:
 
     def _extract_sync(self, transcript: str) -> Entities:
         try:
-            resp = self._client.chat.completions.create(
+            resp = self._client.messages.create(
                 model=self._model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": transcript},
-                ],
-                response_format={"type": "json_object"},
                 max_tokens=400,
-                temperature=0.0,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": transcript}],
             )
-            raw = (resp.choices[0].message.content or "").strip()
+            raw = (resp.content[0].text or "").strip()
             return _parse_json(raw)
-        except OpenAIError as exc:
-            logger.warning("OpenAI entity extraction error: %s", exc)
+        except anthropic.APIError as exc:
+            logger.warning("Anthropic entity extraction error: %s", exc)
             return _empty()
 
 
