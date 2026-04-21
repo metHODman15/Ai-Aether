@@ -1,11 +1,13 @@
 # Meeting Assistant
 
 A local, real-time meeting assistant that listens to your microphone,
-transcribes the conversation with OpenAI Whisper, uses Anthropic Claude
-for **conversation context management** (detecting when the topic
-shifts), extracts CRM entities with OpenAI, queries your Salesforce org
-through the REST API, and visualises everything on a live web dashboard
-that stays pinned to the current topic.
+transcribes the conversation with local Whisper (faster-whisper), uses
+Anthropic Claude for **both topic-shift detection and CRM entity
+extraction**, queries your Salesforce org through the REST API, and
+visualises everything on a live web dashboard that stays pinned to the
+current topic.
+
+Only one API key is required: your **Anthropic API key**. No OpenAI key needed.
 
 Everything runs locally on your machine. No data is stored on disk.
 
@@ -24,9 +26,8 @@ products. The assistant treats each subject as a **topic**:
   the new topic label, and renders fresh data from the next Salesforce
   query.
 
-CRM entity extraction (customer, contact, deal amount, stage) runs
-against an OpenAI chat model, keeping Claude reserved for context
-management.
+CRM entity extraction (customer, contact, deal amount, stage) also runs
+through Claude (`claude-haiku-4-5`), reusing the same Anthropic API key.
 
 ## Transcription backends
 
@@ -84,15 +85,14 @@ use an NVIDIA GPU.
 | Latency | Network round-trip | CPU/GPU speed — can be slower than `base` on old hardware |
 | Privacy | Audio sent to OpenAI | Audio never leaves the machine |
 
-> **Note:** `OPENAI_API_KEY` is still required even in local mode because CRM
-> entity extraction always uses the OpenAI chat API.
+> **Note:** `OPENAI_API_KEY` is not required. Both topic-shift detection and
+> CRM entity extraction use the Anthropic API (`ANTHROPIC_API_KEY`).
 
 ## Requirements
 
 - Python 3.10 or newer
 - A working microphone
-- An OpenAI API key (entity extraction; also Whisper when using the default `openai` backend)
-- An Anthropic API key (Claude — used only for topic detection)
+- An **Anthropic API key** (Claude — topic-shift detection and entity extraction)
 - Salesforce username, password, and security token
 
 On Linux you may need PortAudio system libraries for microphone capture:
@@ -117,7 +117,7 @@ dependencies, and walks you through filling in every credential.
 
 ```bash
 git clone <your-fork-url>
-cd meeting-assistant
+cd Ai-Aether/meeting-assistant
 bash setup.sh
 ```
 
@@ -125,7 +125,7 @@ bash setup.sh
 
 ```powershell
 git clone <your-fork-url>
-cd meeting-assistant
+cd Ai-Aether\meeting-assistant
 .\setup.ps1
 ```
 
@@ -136,13 +136,13 @@ cd meeting-assistant
 After the script finishes, start the app with:
 
 ```bash
-# macOS / Linux
+# macOS / Linux (run from Ai-Aether root)
 source .venv/bin/activate
-python app.py
+python3 meeting-assistant/app.py
 
-# Windows
+# Windows (run from Ai-Aether root)
 .\.venv\Scripts\Activate.ps1
-python app.py
+python meeting-assistant/app.py
 ```
 
 ---
@@ -151,19 +151,20 @@ python app.py
 
 ```bash
 git clone <your-fork-url>
-cd meeting-assistant
-python -m venv .venv && source .venv/bin/activate   # optional but recommended
-pip install -r requirements.txt
-cp .env.example .env
-# edit .env and fill in your keys
+cd Ai-Aether
+python3 -m venv .venv && source .venv/bin/activate   # optional but recommended
+pip install -r meeting-assistant/requirements.txt
+pip install faster-whisper
+cp meeting-assistant/.env.example meeting-assistant/.env
+# edit meeting-assistant/.env and fill in your keys
 ```
 
 ### Environment variables
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | yes | OpenAI API key — used for entity extraction; also for Whisper when `WHISPER_BACKEND=openai` |
-| `ANTHROPIC_API_KEY` | yes | Anthropic API key — used **only** for topic-shift detection |
+| `OPENAI_API_KEY` | no | Not required — entity extraction now uses Claude |
+| `ANTHROPIC_API_KEY` | yes | Anthropic API key — used for topic-shift detection **and** CRM entity extraction |
 | `SF_USERNAME` | yes | Salesforce login email |
 | `SF_PASSWORD` | yes | Salesforce password |
 | `SF_SECURITY_TOKEN` | yes | Salesforce security token (sent to your email by Salesforce) |
@@ -180,7 +181,8 @@ cp .env.example .env
 ## Run
 
 ```bash
-python app.py
+# From the Ai-Aether root with .venv active
+python3 meeting-assistant/app.py
 ```
 
 Open <http://127.0.0.1:8000> in your browser. As soon as the page loads
@@ -201,9 +203,9 @@ Stop the server with `Ctrl+C`.
 ## How it works
 
 ```
-mic → backend/audio.py → backend/transcribe.py     (Whisper)
+mic → backend/audio.py → backend/transcribe.py     (faster-whisper — local)
                        → backend/context.py        (Claude — topic shift?)
-                       → backend/entities.py       (OpenAI — extract CRM entities)
+                       → backend/entities.py       (Claude — extract CRM entities)
                        → backend/topic_state.py    (merge into current topic)
                        → backend/salesforce_client.py (REST API)
                        → backend/hub.py → WebSocket → frontend/
@@ -223,9 +225,9 @@ meeting-assistant/
 ├── app.py                    FastAPI server + capture/transcribe pipeline
 ├── backend/
 │   ├── audio.py              Microphone capture (sounddevice)
-│   ├── transcribe.py         OpenAI Whisper wrapper
+│   ├── transcribe.py         faster-whisper local transcription
 │   ├── context.py            Anthropic Claude — topic-shift detection
-│   ├── entities.py           OpenAI — CRM entity extraction
+│   ├── entities.py           Anthropic Claude — CRM entity extraction
 │   ├── topic_state.py        In-memory current-topic state
 │   ├── salesforce_client.py  Salesforce REST queries + aggregations
 │   ├── hub.py                WebSocket broadcast hub
