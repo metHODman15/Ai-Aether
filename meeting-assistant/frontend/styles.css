@@ -969,3 +969,52 @@ body.crm-offline .chart-panel {
   transition: opacity 0.2s, filter 0.2s;
   pointer-events: none;
 }
+
+/* ── CRM slow-query loading indicators ──────────────────────────────── */
+@keyframes crm-spin {
+  to { transform: rotate(360deg); }
+}
+
+.crm-loading-overlay {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.chart-panel {
+  position: relative;
+}
+
+.crm-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(56, 189, 248, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: crm-spin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+
+.crm-list-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(56, 189, 248, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: crm-spin 0.75s linear infinite;
+  vertical-align: middle;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.crm-loading-overlay[hidden],
+.crm-list-spinner[hidden] {
+  display: none;
+}

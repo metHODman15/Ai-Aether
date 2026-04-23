@@ -1,6 +1,6 @@
 // Chart.js instances for the live view + CRM record list rendering.
 import { dom } from "./dom.js";
-import { PALETTE } from "./state.js";
+import { PALETTE, isViewingLive } from "./state.js";
 import { fmtAmount } from "./utils.js";
 
 export const stagePie = new Chart(dom.stagePieCanvas, {
@@ -95,4 +95,19 @@ export function renderCrm(crm) {
   amountLine.data.labels = timeline.map((t) => t.date);
   amountLine.data.datasets[0].data = timeline.map((t) => t.amount);
   amountLine.update();
+}
+
+export function showCrmLoading() {
+  if (!isViewingLive()) return;
+  if (dom.stagePieLoading) dom.stagePieLoading.hidden = false;
+  if (dom.amountLineLoading) dom.amountLineLoading.hidden = false;
+  if (dom.accountsLoading) dom.accountsLoading.hidden = false;
+  if (dom.opportunitiesLoading) dom.opportunitiesLoading.hidden = false;
+}
+
+export function hideCrmLoading() {
+  if (dom.stagePieLoading) dom.stagePieLoading.hidden = true;
+  if (dom.amountLineLoading) dom.amountLineLoading.hidden = true;
+  if (dom.accountsLoading) dom.accountsLoading.hidden = true;
+  if (dom.opportunitiesLoading) dom.opportunitiesLoading.hidden = true;
 }

@@ -411,6 +411,9 @@ def build_app(config: Config) -> FastAPI:
             payload["reason"] = reason
         await hub.broadcast(payload)
 
+    async def _on_sf_loading(loading: bool) -> None:
+        await hub.broadcast({"type": "crm_loading", "loading": loading, "ts": time.time()})
+
     sf_client = SalesforceClient(
         username=config.sf_username,
         password=config.sf_password,
@@ -418,6 +421,7 @@ def build_app(config: Config) -> FastAPI:
         domain=config.sf_domain,
         idle_refresh_seconds=config.sf_session_timeout_minutes * 60,
         on_status_change=_on_sf_status_change,
+        on_loading=_on_sf_loading,
     )
     extractor = EntityExtractor(
         api_key=config.openai_api_key,

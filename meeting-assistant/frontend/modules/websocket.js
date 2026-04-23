@@ -7,6 +7,7 @@
 import { dom } from "./dom.js";
 import { state } from "./state.js";
 import { handleEvent } from "./events.js";
+import { hideCrmLoading } from "./charts.js";
 
 const MIN_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30000;
@@ -80,6 +81,7 @@ export function connect() {
 
   ws.onclose = () => {
     state.currentSessionId = null;
+    hideCrmLoading();
     if (state.demoActive) return;
     setStatus(
       everConnected ? "Reconnecting\u2026" : "Disconnected",

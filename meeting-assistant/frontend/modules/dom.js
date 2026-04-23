@@ -53,6 +53,11 @@ export const dom = {
   stagePieCanvas: $("stagePie"),
   amountLineCanvas: $("amountLine"),
 
+  stagePieLoading: $("stagePieLoading"),
+  amountLineLoading: $("amountLineLoading"),
+  accountsLoading: $("accountsLoading"),
+  opportunitiesLoading: $("opportunitiesLoading"),
+
   // CRM-offline banner — created lazily in main.js if missing.
   crmBanner: $("crmBanner"),
 };

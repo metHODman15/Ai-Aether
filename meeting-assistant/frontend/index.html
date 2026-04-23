@@ -104,11 +104,17 @@
 
     <section class="panel chart-panel">
       <h2>Opportunity Stages</h2>
+      <div class="crm-loading-overlay" id="stagePieLoading" hidden>
+        <span class="crm-spinner" aria-label="Loading CRM data…"></span>
+      </div>
       <canvas id="stagePie"></canvas>
     </section>
 
     <section class="panel chart-panel">
       <h2>Deal Amounts Over Time</h2>
+      <div class="crm-loading-overlay" id="amountLineLoading" hidden>
+        <span class="crm-spinner" aria-label="Loading CRM data…"></span>
+      </div>
       <canvas id="amountLine"></canvas>
     </section>
 
@@ -116,11 +122,11 @@
       <h2>Salesforce Records</h2>
       <div class="records-grid">
         <div>
-          <h3>Accounts</h3>
+          <h3>Accounts <span class="crm-list-spinner" id="accountsLoading" hidden aria-label="Loading…"></span></h3>
           <ul id="accounts" class="record-list"><li class="empty">No matches yet</li></ul>
         </div>
         <div>
-          <h3>Opportunities</h3>
+          <h3>Opportunities <span class="crm-list-spinner" id="opportunitiesLoading" hidden aria-label="Loading…"></span></h3>
           <ul id="opportunities" class="record-list"><li class="empty">No matches yet</li></ul>
         </div>
       </div>

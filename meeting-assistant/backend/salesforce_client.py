@@ -23,6 +23,8 @@ from .entities import Entities
 
 logger = logging.getLogger(__name__)
 
+SLOW_QUERY_THRESHOLD_SECONDS: float = 2.0
+
 
 # Conservative fallback used if the Opportunity.StageName describe call
 # fails (e.g. permission issue on a fresh sandbox).
@@ -64,6 +66,7 @@ class SalesforceClient:
         domain: str = "login",
         idle_refresh_seconds: int = 30 * 60,
         on_status_change: Callable[[bool, str | None], Awaitable[None]] | None = None,
+        on_loading: Callable[[bool], Awaitable[None]] | None = None,
     ):
         self._creds = dict(
             username=username,
@@ -78,6 +81,7 @@ class SalesforceClient:
         self._stages: tuple[str, ...] = DEFAULT_STAGE_FALLBACK
         self._is_online: bool = False
         self._on_status_change = on_status_change
+        self._on_loading = on_loading
 
     # ── Public observable state ──────────────────────────────────────────
 
@@ -171,6 +175,15 @@ class SalesforceClient:
 
     # ── Query API ────────────────────────────────────────────────────────
 
+    async def _emit_loading(self, loading: bool) -> None:
+        """Notify the caller that a slow query is in progress (or has finished)."""
+        if self._on_loading is None:
+            return
+        try:
+            await self._on_loading(loading)
+        except Exception:
+            logger.exception("on_loading handler failed")
+
     async def query_for_entities(self, entities: Entities) -> CrmResult:
         if not _has_searchable_input(entities):
             return _empty_result()
@@ -179,7 +192,17 @@ class SalesforceClient:
         if sf is None:
             return _empty_result()
 
+        loading_emitted = False
+        slow_query_task: asyncio.Task | None = None
+
+        async def _maybe_emit_loading() -> None:
+            nonlocal loading_emitted
+            await asyncio.sleep(SLOW_QUERY_THRESHOLD_SECONDS)
+            loading_emitted = True
+            await self._emit_loading(True)
+
         try:
+            slow_query_task = asyncio.create_task(_maybe_emit_loading())
             result = await asyncio.to_thread(self._query_sync, sf, entities)
             # A successful query is the authoritative signal that the
             # CRM is healthy. If a previous query had marked us offline
@@ -225,6 +248,14 @@ class SalesforceClient:
             await self._set_online(False, str(exc))
             return _empty_result()
         finally:
+            if slow_query_task is not None and not slow_query_task.done():
+                slow_query_task.cancel()
+                try:
+                    await slow_query_task
+                except asyncio.CancelledError:
+                    pass
+            if loading_emitted:
+                await self._emit_loading(False)
             self._last_activity = time.monotonic()
 
     def _query_sync(self, sf: Salesforce, entities: Entities) -> CrmResult:

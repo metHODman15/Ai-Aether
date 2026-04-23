@@ -8,7 +8,7 @@ import {
   appendTranscriptLine, refreshSearchHitsQuiet, flashTopic,
 } from "./transcript.js";
 import { renderEntities } from "./entities.js";
-import { renderCrm } from "./charts.js";
+import { renderCrm, showCrmLoading, hideCrmLoading } from "./charts.js";
 import {
   renderHistoryList, renderViewedTopic, updateHistoryModeUi, startNewTopic,
 } from "./history.js";
@@ -93,6 +93,7 @@ export function handleEvent(evt) {
   }
 
   if (evt.type === "crm") {
+    hideCrmLoading();
     const t = currentTopic();
     if (!t) return;
     if (evt.topic_label && evt.topic_label !== t.label) return;
@@ -115,6 +116,11 @@ export function handleEvent(evt) {
       dom.audioSampleRate.value = String(evt.audio_sample_rate);
       state.lastConfirmedSampleRate = evt.audio_sample_rate;
     }
+    return;
+  }
+
+  if (evt.type === "crm_loading") {
+    if (evt.loading) showCrmLoading(); else hideCrmLoading();
     return;
   }
 
