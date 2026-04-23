@@ -60,8 +60,8 @@ async def test_full_queue_drops_oldest_noncritical_first():
     assert await ch.offer(t3, _payload(t3))
 
     # Inspect internal queue ordering: critical event first, then t2, t3.
-    queued_types = [json.loads(p)["type"] for (p, _) in ch._queue]
-    queued_texts = [json.loads(p).get("text") for (p, _) in ch._queue]
+    queued_types = [json.loads(p)["type"] for (p, _, _) in ch._queue]
+    queued_texts = [json.loads(p).get("text") for (p, _, _) in ch._queue]
     assert queued_types[0] == "topic_shift"
     assert "one" not in queued_texts, "oldest non-critical (t1) should be dropped"
     assert "two" in queued_texts and "three" in queued_texts
@@ -84,7 +84,64 @@ async def test_critical_events_survive_sustained_pressure():
         evt = {"type": "transcript", "text": f"line {i}"}
         await ch.offer(evt, _payload(evt))
 
-    queued_types = [json.loads(p)["type"] for (p, _) in ch._queue]
+    queued_types = [json.loads(p)["type"] for (p, _, _) in ch._queue]
     assert "topic_shift" in queued_types
     assert "error" in queued_types
     assert ch._dropped_count > 0
+
+
+@pytest.mark.asyncio
+async def test_queue_saturated_with_critical_never_evicts_critical():
+    """Invariant: when the queue is filled entirely with critical events,
+    no critical event is ever evicted. New non-critical offers are dropped
+    and new critical offers are dropped only as a logged last resort, but
+    every queued critical event remains intact."""
+    ws = _FakeWebSocket()
+    ch = _ClientChannel(ws, max_depth=3)
+
+    crit_a = {"type": "topic_shift", "label": "A"}
+    crit_b = {"type": "error", "stage": "salesforce", "message": "oops"}
+    crit_c = {"type": "crm_offline", "reason": "timeout"}
+    assert await ch.offer(crit_a, _payload(crit_a))
+    assert await ch.offer(crit_b, _payload(crit_b))
+    assert await ch.offer(crit_c, _payload(crit_c))
+
+    # New non-critical event must be dropped — and the queue must
+    # still contain all three original critical events in order.
+    incoming = {"type": "transcript", "text": "noise"}
+    assert await ch.offer(incoming, _payload(incoming)) is False
+    queued_types = [json.loads(p)["type"] for (p, _, _) in ch._queue]
+    assert queued_types == ["topic_shift", "error", "crm_offline"]
+
+    # Even another critical event must not evict any of the queued
+    # critical events; it gets dropped (logged as last-resort).
+    extra_crit = {"type": "topic_shift", "label": "B"}
+    assert await ch.offer(extra_crit, _payload(extra_crit)) is False
+    queued_types = [json.loads(p)["type"] for (p, _, _) in ch._queue]
+    assert queued_types == ["topic_shift", "error", "crm_offline"]
+
+
+@pytest.mark.asyncio
+async def test_crm_event_preserved_when_droppable_present():
+    """`crm` is non-critical but valuable. When the queue is full and a
+    droppable event (transcript / entities / document_unit) is present,
+    the droppable one must be evicted first — `crm` must survive."""
+    ws = _FakeWebSocket()
+    ch = _ClientChannel(ws, max_depth=3)
+
+    crm_evt = {"type": "crm", "accounts": [], "opportunities": []}
+    transcript_evt = {"type": "transcript", "text": "filler"}
+    entities_evt = {"type": "entities", "entities": {}}
+
+    assert await ch.offer(crm_evt, _payload(crm_evt))
+    assert await ch.offer(transcript_evt, _payload(transcript_evt))
+    assert await ch.offer(entities_evt, _payload(entities_evt))
+
+    # New droppable event arrives — the OLDEST DROPPABLE (transcript)
+    # must be evicted, NOT the crm event.
+    new_drop = {"type": "document_unit", "text": "x"}
+    assert await ch.offer(new_drop, _payload(new_drop))
+    queued_types = [json.loads(p)["type"] for (p, _, _) in ch._queue]
+    assert queued_types[0] == "crm", "crm must remain at head of queue"
+    assert "transcript" not in queued_types, "oldest droppable evicted"
+    assert "entities" in queued_types and "document_unit" in queued_types

@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 # Events whose loss would cause the UI to display incorrect state or
-# silently swallow problems. Always preserved during backpressure.
+# silently swallow problems. Always preserved during backpressure —
+# never evicted from the queue, even under saturation.
 CRITICAL_EVENT_TYPES: frozenset[str] = frozenset({
     "topic_shift",
     "error",
@@ -34,13 +35,27 @@ CRITICAL_EVENT_TYPES: frozenset[str] = frozenset({
     "document_done",
 })
 
+# High-volume event classes that are safe to drop when a slow client's
+# queue fills up. These are streaming/incremental updates whose newer
+# successors quickly supersede them, so dropping the oldest one of
+# these has no lasting effect on dashboard correctness.
+DROPPABLE_EVENT_TYPES: frozenset[str] = frozenset({
+    "transcript",
+    "entities",
+    "document_unit",
+})
+
 # Maximum number of pending messages per client before we start
-# dropping the oldest non-critical event.
+# dropping the oldest droppable event.
 DEFAULT_QUEUE_DEPTH = 50
 
 
 def is_critical(event: dict[str, Any]) -> bool:
     return (event.get("type") or "") in CRITICAL_EVENT_TYPES
+
+
+def is_droppable(event: dict[str, Any]) -> bool:
+    return (event.get("type") or "") in DROPPABLE_EVENT_TYPES
 
 
 class _ClientChannel:
@@ -50,49 +65,91 @@ class _ClientChannel:
         self.ws = ws
         self.id = uuid.uuid4().hex[:8]
         self._max_depth = max_depth
-        # deque[(payload_str, is_critical)]
-        self._queue: deque[tuple[str, bool]] = deque()
+        # deque[(payload_str, is_critical, is_droppable)]
+        self._queue: deque[tuple[str, bool, bool]] = deque()
         self._cv = asyncio.Condition()
         self._closed = False
         self._dropped_count = 0
         self.task: asyncio.Task | None = None
 
     async def offer(self, event: dict[str, Any], payload: str) -> bool:
-        """Attempt to enqueue an event. Drops oldest non-critical if full.
+        """Attempt to enqueue an event with backpressure-aware policy.
 
-        Returns True if the event was enqueued (possibly after dropping
-        another), False only if the channel is already closed.
+        When the queue is full we evict the oldest *droppable* event
+        (a high-volume streaming event such as transcript / entities /
+        document_unit) to make room. Critical events are never
+        evicted. If the queue is full and contains no droppable
+        entries:
+          - if the incoming event is droppable, the incoming event is
+            dropped (apply backpressure to the sender);
+          - if the incoming event is critical, we make room for it by
+            evicting the oldest non-critical entry; if there are no
+            non-critical entries we keep all critical entries and
+            drop the incoming critical event only as a last resort,
+            logging loudly.
+
+        Returns True if the event was enqueued, False if it was
+        intentionally dropped or the channel is already closed.
         """
         critical = is_critical(event)
+        droppable = is_droppable(event)
         async with self._cv:
             if self._closed:
                 return False
             if len(self._queue) >= self._max_depth:
-                # Find the oldest non-critical entry to drop.
+                # 1. Try to evict the oldest droppable (transcript /
+                # entities / document_unit) entry first.
                 drop_index: int | None = None
-                for i, (_, is_crit) in enumerate(self._queue):
-                    if not is_crit:
+                for i, (_, _, is_drop) in enumerate(self._queue):
+                    if is_drop:
                         drop_index = i
                         break
+
+                # 2. If no droppable entries exist and the incoming
+                # event is critical, fall back to evicting the oldest
+                # non-critical entry (e.g. a `crm` payload) to keep
+                # the critical signal flowing.
+                if drop_index is None and critical:
+                    for i, (_, is_crit, _) in enumerate(self._queue):
+                        if not is_crit:
+                            drop_index = i
+                            break
+
                 if drop_index is not None:
                     del self._queue[drop_index]
                     self._dropped_count += 1
                     logger.warning(
-                        "Hub client %s queue full; dropped 1 non-critical event "
-                        "(total dropped: %d)",
+                        "Hub client %s queue full; evicted 1 non-critical event "
+                        "to make room (total evicted: %d)",
                         self.id, self._dropped_count,
                     )
+                elif not critical:
+                    # Queue is full of critical-or-non-droppable events
+                    # and the incoming event is non-critical: drop the
+                    # incoming event to preserve queued state-change
+                    # signals.
+                    self._dropped_count += 1
+                    logger.warning(
+                        "Hub client %s queue full of critical events; dropped "
+                        "incoming non-critical %r event (total dropped: %d)",
+                        self.id, event.get("type"), self._dropped_count,
+                    )
+                    return False
                 else:
-                    # Queue is entirely critical events. To preserve them,
-                    # drop the oldest critical entry and log loudly.
-                    self._queue.popleft()
+                    # Last-resort: queue is entirely critical events
+                    # and the incoming event is also critical. We must
+                    # not silently corrupt either side, so we drop the
+                    # *incoming* event and log loudly. The user will
+                    # see the existing queued critical events first.
                     self._dropped_count += 1
                     logger.error(
                         "Hub client %s queue saturated with critical events; "
-                        "dropped oldest critical event to make room.",
-                        self.id,
+                        "dropped incoming critical %r event to preserve queued "
+                        "state-change signals.",
+                        self.id, event.get("type"),
                     )
-            self._queue.append((payload, critical))
+                    return False
+            self._queue.append((payload, critical, droppable))
             self._cv.notify()
             return True
 
@@ -103,7 +160,7 @@ class _ClientChannel:
                     await self._cv.wait()
                 if self._closed and not self._queue:
                     return
-                payload, _ = self._queue.popleft()
+                payload, _, _ = self._queue.popleft()
             try:
                 await self.ws.send_text(payload)
             except Exception as exc:
