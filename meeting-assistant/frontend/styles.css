@@ -963,7 +963,7 @@ canvas { max-height: 280px; }
    brightness because Whisper + Claude continue to work. */
 body.crm-offline #accounts,
 body.crm-offline #opportunities,
-body.crm-offline .chart-card {
+body.crm-offline .chart-panel {
   opacity: 0.45;
   filter: grayscale(0.4);
   transition: opacity 0.2s, filter 0.2s;

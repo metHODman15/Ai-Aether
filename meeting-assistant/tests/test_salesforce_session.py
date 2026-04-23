@@ -116,3 +116,47 @@ async def test_status_callback_only_fires_on_transition():
     # Exactly one offline→online transition expected.
     assert events.count(True) == 1
     assert False not in events
+
+
+@pytest.mark.asyncio
+async def test_recovery_from_query_failure_emits_crm_online():
+    """After a transient query failure marks the client offline, the
+    very next successful query must flip it back to online and fire
+    the callback again — the UI must un-grey without waiting for an
+    idle-timeout-driven reconnect."""
+    from simple_salesforce.exceptions import SalesforceError
+
+    events: list[bool] = []
+
+    async def cb(online: bool, reason: str | None) -> None:
+        events.append(online)
+
+    # Use a fake whose query() can be flipped to raise on demand.
+    class _FlakyFakeSF(_FakeSF):
+        raise_next: bool = False
+
+        def query(self, soql):
+            if _FlakyFakeSF.raise_next:
+                _FlakyFakeSF.raise_next = False
+                raise SalesforceError("https://x", 500, "Account", "boom")
+            return {"totalSize": 0, "records": []}
+
+    import backend.salesforce_client as sf_mod
+    sf_mod.Salesforce = _FlakyFakeSF
+    _FlakyFakeSF.instances = []
+
+    client = _new_client(callback=cb)
+    await client.warm_up()
+    assert client.is_online is True
+    assert events == [True]
+
+    # Trigger a query failure → offline transition.
+    _FlakyFakeSF.raise_next = True
+    await client.query_for_entities({"customer_name": "Acme"})
+    assert client.is_online is False
+    assert events == [True, False]
+
+    # Next query succeeds → online transition fires again, no idle wait.
+    await client.query_for_entities({"customer_name": "Globex"})
+    assert client.is_online is True
+    assert events == [True, False, True]

@@ -180,28 +180,48 @@ class SalesforceClient:
             return _empty_result()
 
         try:
-            return await asyncio.to_thread(self._query_sync, sf, entities)
+            result = await asyncio.to_thread(self._query_sync, sf, entities)
+            # A successful query is the authoritative signal that the
+            # CRM is healthy. If a previous query had marked us offline
+            # this re-emits crm_online so the UI un-greys immediately.
+            await self._set_online(True)
+            return result
         except SalesforceExpiredSession as exc:
             logger.info("Salesforce session expired (%s); re-authenticating once.", exc)
+            # Drop the dead session so _ensure_session re-connects.
+            async with self._sf_lock:
+                self._sf = None
             sf = await self._ensure_session(force=True)
             if sf is None:
                 return _empty_result()
             try:
-                return await asyncio.to_thread(self._query_sync, sf, entities)
+                result = await asyncio.to_thread(self._query_sync, sf, entities)
+                await self._set_online(True)
+                return result
             except SalesforceError as exc2:
                 logger.warning("Salesforce query failed after refresh: %s", exc2)
+                async with self._sf_lock:
+                    self._sf = None
                 await self._set_online(False, str(exc2))
                 return _empty_result()
         except SalesforceAuthenticationFailed as exc:
             logger.warning("Salesforce auth failed mid-session: %s", exc)
+            async with self._sf_lock:
+                self._sf = None
             await self._set_online(False, str(exc))
             return _empty_result()
         except SalesforceError as exc:
             logger.warning("Salesforce query failed: %s", exc)
+            # Force the next query to re-establish the session so a
+            # subsequent success can flip the status back to online.
+            async with self._sf_lock:
+                self._sf = None
             await self._set_online(False, str(exc))
             return _empty_result()
         except Exception as exc:
             logger.warning("Unexpected Salesforce error: %s", exc)
+            async with self._sf_lock:
+                self._sf = None
             await self._set_online(False, str(exc))
             return _empty_result()
         finally:
