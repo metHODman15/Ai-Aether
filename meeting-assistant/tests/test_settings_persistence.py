@@ -35,7 +35,7 @@ def _load_app_module():
                  "uvicorn", "backend", "backend.audio", "backend.config",
                  "backend.context", "backend.document_parser", "backend.entities",
                  "backend.hub", "backend.salesforce_client", "backend.store",
-                 "backend.topic_state", "backend.transcribe"):
+                 "backend.topic_state", "backend.transcribe", "backend.log_utils"):
         mod = types.ModuleType(name)
         for attr in ("load_dotenv", "FastAPI", "File", "HTTPException", "UploadFile",
                      "WebSocket", "WebSocketDisconnect", "JSONResponse", "StaticFiles",
@@ -43,7 +43,9 @@ def _load_app_module():
                      "ContextManager", "DEFAULT_SENSITIVITY", "SENSITIVITY_LEVELS",
                      "parse_document", "EntityExtractor", "ConnectionHub",
                      "MeetingStore", "SalesforceClient", "TopicState",
-                     "Transcriber", "create_transcriber"):
+                     "Transcriber", "create_transcriber",
+                     "validate_credentials", "setup_logging", "set_request_id",
+                     "reset_request_id", "new_request_id"):
             setattr(mod, attr, MagicMock())
         stubs[name] = mod
 

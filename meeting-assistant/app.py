@@ -25,16 +25,23 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from backend.audio import microphone_chunks
-from backend.config import Config, ConfigError
+from backend.config import Config, ConfigError, validate_credentials
 from backend.context import ContextManager, DEFAULT_SENSITIVITY, SENSITIVITY_LEVELS
 from backend.document_parser import parse_document
 from backend.entities import EntityExtractor
 from backend.hub import ConnectionHub
+from backend.log_utils import (
+    new_request_id,
+    reset_request_id,
+    set_request_id,
+    setup_logging,
+)
 from backend.salesforce_client import SalesforceClient
 from backend.store import MeetingStore
 from backend.topic_state import TopicState
 from backend.transcribe import Transcriber, create_transcriber
 
+# Initial bootstrap logging; replaced by setup_logging() once config is loaded.
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -251,115 +258,119 @@ async def pipeline_loop(
                 get_sample_rate=lambda: settings.audio_sample_rate,
             ):
                 ts = time.time()
+                rid_token = set_request_id(new_request_id())
                 try:
-                    transcript = await transcriber.transcribe(chunk)
-                except Exception as exc:
-                    logger.exception("Transcription failed: %s", exc)
-                    await hub.broadcast({"type": "error", "stage": "transcribe", "message": str(exc)})
-                    continue
+                    try:
+                        transcript = await transcriber.transcribe(chunk)
+                    except Exception as exc:
+                        logger.exception("Transcription failed: %s", exc)
+                        await hub.broadcast({"type": "error", "stage": "transcribe", "message": str(exc)})
+                        continue
 
-                if not transcript:
-                    continue
+                    if not transcript:
+                        continue
 
-                # Step 1: Claude decides whether the topic shifted.
-                try:
-                    decision = await context_mgr.evaluate(
-                        topic.label,
-                        topic.summary,
-                        transcript,
-                        sensitivity=settings.sensitivity,
-                    )
-                except Exception as exc:
-                    logger.exception("Context evaluation failed: %s", exc)
-                    await hub.broadcast({"type": "error", "stage": "context", "message": str(exc)})
-                    decision = None
-
-                shifted = False
-                if decision is not None:
-                    if decision["shift"] or not topic.label:
-                        topic.reset(
-                            label=decision["topic_label"] or "Untitled topic",
-                            summary=decision["summary"],
-                            started_at=ts,
+                    # Step 1: Claude decides whether the topic shifted.
+                    try:
+                        decision = await context_mgr.evaluate(
+                            topic.label,
+                            topic.summary,
+                            transcript,
+                            sensitivity=settings.sensitivity,
                         )
-                        shifted = True
-                    else:
-                        topic.summary = decision["summary"] or topic.summary
+                    except Exception as exc:
+                        logger.exception("Context evaluation failed: %s", exc)
+                        await hub.broadcast({"type": "error", "stage": "context", "message": str(exc)})
+                        decision = None
 
-                if shifted:
-                    current_meeting_id = str(uuid.uuid4())
-                    await _save_meeting(
-                        current_meeting_id, topic.label, topic.started_at, topic.summary
-                    )
+                    shifted = False
+                    if decision is not None:
+                        if decision["shift"] or not topic.label:
+                            topic.reset(
+                                label=decision["topic_label"] or "Untitled topic",
+                                summary=decision["summary"],
+                                started_at=ts,
+                            )
+                            shifted = True
+                        else:
+                            topic.summary = decision["summary"] or topic.summary
+
+                    if shifted:
+                        current_meeting_id = str(uuid.uuid4())
+                        await _save_meeting(
+                            current_meeting_id, topic.label, topic.started_at, topic.summary
+                        )
+                        await hub.broadcast({
+                            "type": "topic_shift",
+                            "ts": ts,
+                            "label": topic.label,
+                            "summary": topic.summary,
+                            "meeting_id": current_meeting_id,
+                        })
+
                     await hub.broadcast({
-                        "type": "topic_shift",
+                        "type": "transcript",
                         "ts": ts,
-                        "label": topic.label,
-                        "summary": topic.summary,
-                        "meeting_id": current_meeting_id,
+                        "text": transcript,
+                        "topic_label": topic.label,
                     })
 
-                await hub.broadcast({
-                    "type": "transcript",
-                    "ts": ts,
-                    "text": transcript,
-                    "topic_label": topic.label,
-                })
+                    if current_meeting_id:
+                        try:
+                            await store.append_transcript(current_meeting_id, ts, transcript)
+                        except Exception as exc:
+                            logger.warning("Could not save transcript line: %s", exc)
 
-                if current_meeting_id:
+                    # Step 2: Extract entities for Salesforce lookup.
                     try:
-                        await store.append_transcript(current_meeting_id, ts, transcript)
+                        new_entities = await extractor.extract(transcript)
                     except Exception as exc:
-                        logger.warning("Could not save transcript line: %s", exc)
+                        logger.exception("Entity extraction failed: %s", exc)
+                        await hub.broadcast({"type": "error", "stage": "extract", "message": str(exc)})
+                        continue
 
-                # Step 2: Extract entities for Salesforce lookup.
-                try:
-                    new_entities = await extractor.extract(transcript)
-                except Exception as exc:
-                    logger.exception("Entity extraction failed: %s", exc)
-                    await hub.broadcast({"type": "error", "stage": "extract", "message": str(exc)})
-                    continue
+                    entities_changed = topic.merge_entities(new_entities)
+                    should_query = shifted or entities_changed
 
-                entities_changed = topic.merge_entities(new_entities)
-                should_query = shifted or entities_changed
+                    await hub.broadcast({
+                        "type": "entities",
+                        "ts": ts,
+                        "entities": dict(topic.entities),
+                        "topic_label": topic.label,
+                    })
 
-                await hub.broadcast({
-                    "type": "entities",
-                    "ts": ts,
-                    "entities": dict(topic.entities),
-                    "topic_label": topic.label,
-                })
+                    if current_meeting_id and entities_changed:
+                        try:
+                            await store.upsert_entities(current_meeting_id, dict(topic.entities))
+                        except Exception as exc:
+                            logger.warning("Could not save entities: %s", exc)
 
-                if current_meeting_id and entities_changed:
+                    if not should_query:
+                        continue
+
+                    # Step 3: Query Salesforce only when the topic is fresh or
+                    # entities changed within the current topic.
                     try:
-                        await store.upsert_entities(current_meeting_id, dict(topic.entities))
+                        crm = await sf_client.query_for_entities(topic.entities)
                     except Exception as exc:
-                        logger.warning("Could not save entities: %s", exc)
+                        logger.exception("Salesforce query failed: %s", exc)
+                        await hub.broadcast({"type": "error", "stage": "salesforce", "message": str(exc)})
+                        continue
 
-                if not should_query:
-                    continue
+                    await hub.broadcast({
+                        "type": "crm",
+                        "ts": ts,
+                        "data": crm,
+                        "topic_label": topic.label,
+                    })
 
-                # Step 3: Query Salesforce only when the topic is fresh or
-                # entities changed within the current topic.
-                try:
-                    crm = await sf_client.query_for_entities(topic.entities)
-                except Exception as exc:
-                    logger.exception("Salesforce query failed: %s", exc)
-                    await hub.broadcast({"type": "error", "stage": "salesforce", "message": str(exc)})
-                    continue
-
-                await hub.broadcast({
-                    "type": "crm",
-                    "ts": ts,
-                    "data": crm,
-                    "topic_label": topic.label,
-                })
-
-                if current_meeting_id:
-                    try:
-                        await store.upsert_crm(current_meeting_id, crm)
-                    except Exception as exc:
-                        logger.warning("Could not save CRM data: %s", exc)
+                    if current_meeting_id:
+                        try:
+                            await store.upsert_crm(current_meeting_id, crm)
+                        except Exception as exc:
+                            logger.warning("Could not save CRM data: %s", exc)
+                finally:
+                    reset_request_id(rid_token)
 
     except asyncio.CancelledError:
         logger.info("Pipeline stopped")
@@ -387,17 +398,50 @@ def build_app(config: Config) -> FastAPI:
         local_compute_type=config.local_whisper_compute_type,
     )
     context_mgr = ContextManager(api_key=config.anthropic_api_key)
-    extractor = EntityExtractor(api_key=config.openai_api_key)
+
+    # Track whether the SalesforceClient callback has emitted an initial
+    # status event so the lifespan doesn't double-broadcast on startup.
+    sf_status_emitted = {"value": False}
+
+    async def _on_sf_status_change(online: bool, reason: str | None) -> None:
+        sf_status_emitted["value"] = True
+        evt = "crm_online" if online else "crm_offline"
+        payload: dict = {"type": evt, "ts": time.time()}
+        if reason:
+            payload["reason"] = reason
+        await hub.broadcast(payload)
+
     sf_client = SalesforceClient(
         username=config.sf_username,
         password=config.sf_password,
         security_token=config.sf_security_token,
         domain=config.sf_domain,
+        idle_refresh_seconds=config.sf_session_timeout_minutes * 60,
+        on_status_change=_on_sf_status_change,
+    )
+    extractor = EntityExtractor(
+        api_key=config.openai_api_key,
+        stage_provider=sf_client.get_stage_names,
     )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         _cleanup_stale_temp_files()
+        # Best-effort connect to Salesforce so dynamic stages are loaded
+        # before the first audio chunk arrives. Never raises. The
+        # status callback above will broadcast a crm_online/crm_offline
+        # event if the warm-up causes a transition.
+        await sf_client.warm_up()
+        # Fallback: if warm_up did not produce a transition (e.g. the
+        # client started offline and stayed offline without an
+        # explicit failure-to-offline transition), still emit one
+        # initial status event so newly-connected clients can paint
+        # the correct banner state without waiting.
+        if not sf_status_emitted["value"]:
+            await hub.broadcast({
+                "type": "crm_online" if sf_client.is_online else "crm_offline",
+                "ts": time.time(),
+            })
         session_id = time.time()
         task = asyncio.create_task(
             pipeline_loop(
@@ -631,6 +675,21 @@ def main() -> None:
         config = Config.from_env()
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    setup_logging(config.log_level)
+
+    try:
+        results = validate_credentials(config)
+        for component, status in results.items():
+            logger.info("Startup validation: %s -> %s", component, status)
+    except ConfigError as exc:
+        print(f"Startup validation failed: {exc}", file=sys.stderr)
+        print(
+            "Set SKIP_STARTUP_VALIDATION=1 to start anyway "
+            "(useful for offline / demo development).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     app = build_app(config)

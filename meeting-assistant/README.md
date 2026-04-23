@@ -176,6 +176,9 @@ cp .env.example .env
 | `LOCAL_WHISPER_MODEL` | no | Model size for the local backend: `tiny`, `base` (default), `small`, `medium`, `large-v2`, `large-v3` |
 | `LOCAL_WHISPER_DEVICE` | no | `cpu` (default) or `cuda` for the local backend |
 | `LOCAL_WHISPER_COMPUTE_TYPE` | no | Quantisation type for the local backend: `int8` (default, CPU), `float16` (GPU) |
+| `LOG_LEVEL` | no | Logging verbosity: `DEBUG`, `INFO` (default), `WARNING`, `ERROR`. Each log line carries a per-chunk `request_id` to trace one audio chunk end-to-end |
+| `SF_SESSION_TIMEOUT_MINUTES` | no | Salesforce session idle timeout in minutes (default `30`). After this much idle time, the next CRM query rebuilds the session to avoid `INVALID_SESSION_ID` errors during long meetings |
+| `SKIP_STARTUP_VALIDATION` | no | Set to `1` to skip the Anthropic + Salesforce credential ping at startup (default `0`). Useful for offline development; an invalid Anthropic key will then surface on the first topic-shift attempt instead of at boot |
 
 ## Run
 
@@ -228,12 +231,15 @@ meeting-assistant/
 │   ├── entities.py           OpenAI — CRM entity extraction
 │   ├── topic_state.py        In-memory current-topic state
 │   ├── salesforce_client.py  Salesforce REST queries + aggregations
-│   ├── hub.py                WebSocket broadcast hub
-│   └── config.py             Env-var loading and validation
+│   ├── hub.py                WebSocket broadcast hub with per-client backpressure
+│   ├── log_utils.py          Structured logging + per-chunk request_id propagation
+│   └── config.py             Env-var loading + startup credential validation
 ├── frontend/
-│   ├── index.html            Dashboard markup
+│   ├── index.html            Dashboard markup (loads modules/main.js as ES module)
 │   ├── styles.css            Dashboard styling
-│   └── app.js                WebSocket client + Chart.js charts
+│   └── modules/              ES6 modules: state, dom, utils, charts, entities,
+│       │                     transcript, history, settings, document, events,
+│       │                     crm_banner, websocket, demo, main
 ├── requirements.txt          Pinned Python dependencies
 ├── .env.example              Template for required environment variables
 └── README.md
@@ -254,3 +260,28 @@ meeting-assistant/
   clearly changes.
 - **Empty charts** — the dashboard only shows data when entities match
   Accounts or Opportunities in your org.
+- **Salesforce went offline mid-meeting** — the dashboard surfaces a
+  red "Salesforce is offline" banner at the top of the page and dims
+  the CRM panels. Whisper transcription and Claude topic-shift
+  detection keep running. The banner clears automatically once the
+  next CRM query succeeds.
+- **WebSocket dropped** — the status badge shows "Reconnecting…" with
+  exponential backoff (1s → 30s) until the server is reachable again.
+  Cached topics, entities, and CRM data stay on screen the entire
+  time; nothing is lost across a brief disconnect.
+
+## Operational notes
+
+- **Per-chunk request IDs.** Every log line emitted while processing a
+  single audio chunk carries the same short `request_id`, so you can
+  `grep` one chunk's full trace through transcribe → topic-shift →
+  entities → Salesforce.
+- **Backpressure.** Each WebSocket client has a bounded send queue
+  (depth 50). If a client is slow, the oldest *non-critical* event is
+  dropped; `topic_shift`, `error`, `crm_offline`, `crm_online`, and
+  document lifecycle events are always preserved.
+- **Startup validation.** On boot the app pings Anthropic and attempts
+  a Salesforce login. An invalid Anthropic key aborts startup; an
+  invalid Salesforce login is treated as degraded (the CRM-offline
+  banner appears) so the meeting can still be transcribed. Set
+  `SKIP_STARTUP_VALIDATION=1` to bypass both checks.
