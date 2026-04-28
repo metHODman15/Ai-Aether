@@ -93,10 +93,8 @@ Return only the JSON object — no markdown, no commentary."""
 
 
 class ContextManager:
-    # Pinned dated model ID for topic-shift detection — short, cheap calls.
-    # Using the dated string rather than the alias so behaviour never changes
-    # under us when Anthropic promotes a newer model to "latest".
-    _DEFAULT_MODEL = "claude-3-5-haiku-20241022"
+    # Pinned model for topic-shift detection — short, cheap calls.
+    _DEFAULT_MODEL = "claude-haiku-4-5"
 
     def __init__(self, api_key: str, model: str = _DEFAULT_MODEL):
         self._client = Anthropic(api_key=api_key)

@@ -65,9 +65,12 @@ class Config:
                 f"Choose one of: {', '.join(_VALID_BACKENDS)}."
             )
 
-        # OPENAI_API_KEY is always required: entity extraction uses it regardless
-        # of which transcription backend is selected.
-        openai_api_key = _require("OPENAI_API_KEY")
+        # OPENAI_API_KEY is only required when WHISPER_BACKEND=openai (the default).
+        # Entity extraction uses ANTHROPIC_API_KEY; it no longer depends on OpenAI.
+        if whisper_backend == "openai":
+            openai_api_key = _require("OPENAI_API_KEY")
+        else:
+            openai_api_key = _optional("OPENAI_API_KEY", "")
 
         try:
             sf_session_timeout = int(_optional("SF_SESSION_TIMEOUT_MINUTES", "30"))
@@ -78,14 +81,23 @@ class Config:
                 "SF_SESSION_TIMEOUT_MINUTES must be a positive integer."
             )
 
-        # Determine login URL from SF_DOMAIN (backward compat) or SF_LOGIN_URL.
-        sf_domain = os.getenv("SF_DOMAIN", "").strip()
+        # Determine login URL: SF_LOGIN_URL takes priority. Falls back to
+        # SF_DOMAIN for backward compatibility.
+        #
+        #   SF_DOMAIN=         (unset / empty)  → https://login.salesforce.com
+        #   SF_DOMAIN=login                     → https://login.salesforce.com  (explicit)
+        #   SF_DOMAIN=test                      → https://test.salesforce.com
+        #   SF_DOMAIN=<anything-else>           → https://<domain>.salesforce.com
+        #     e.g. SF_DOMAIN=mycompany          → https://mycompany.salesforce.com
+        sf_domain = os.getenv("SF_DOMAIN", "").strip().lower()
         sf_login_url = os.getenv("SF_LOGIN_URL", "").strip()
         if not sf_login_url:
-            if sf_domain.lower() == "test":
+            if sf_domain in ("", "login"):
+                sf_login_url = "https://login.salesforce.com"
+            elif sf_domain == "test":
                 sf_login_url = "https://test.salesforce.com"
             else:
-                sf_login_url = "https://login.salesforce.com"
+                sf_login_url = f"https://{sf_domain}.salesforce.com"
 
         return cls(
             openai_api_key=openai_api_key,

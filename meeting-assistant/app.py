@@ -438,7 +438,7 @@ def build_app(config: Config) -> FastAPI:
         on_auth_required=_on_sf_auth_required,
     )
     extractor = EntityExtractor(
-        api_key=config.openai_api_key,
+        api_key=config.anthropic_api_key,
         stage_provider=sf_client.get_stage_names,
     )
 

@@ -2,28 +2,26 @@
 from __future__ import annotations
 
 import json
-import types
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from backend.entities import EntityExtractor, _parse_json, _empty, Entities
-from openai import OpenAIError
+from anthropic import APIError
 
 
 def _make_response(content: str) -> MagicMock:
-    """Construct a minimal openai ChatCompletion mock."""
-    msg = MagicMock()
-    msg.content = content
-    choice = MagicMock()
-    choice.message = msg
+    """Construct a minimal Anthropic messages mock."""
+    block = MagicMock()
+    block.type = "text"
+    block.text = content
     resp = MagicMock()
-    resp.choices = [choice]
+    resp.content = [block]
     return resp
 
 
 def _make_extractor() -> tuple[EntityExtractor, MagicMock]:
-    with patch("backend.entities.OpenAI") as cls:
+    with patch("backend.entities.Anthropic") as cls:
         instance = MagicMock()
         cls.return_value = instance
         extractor = EntityExtractor(api_key="test-key")
@@ -108,25 +106,27 @@ class TestEntityExtractor:
             "deal_stage": "Closed Won",
             "keywords": ["nuclear"],
         })
-        mock_client.chat.completions.create.return_value = _make_response(payload)
+        mock_client.messages.create.return_value = _make_response(payload)
         result = extractor._extract_sync("Globex renewal discussion")
         assert result["customer_name"] == "Globex"
 
-    def test_openai_error_returns_empty_entities(self, caplog):
+    def test_api_error_returns_empty_entities(self, caplog):
         extractor, mock_client = _make_extractor()
-        mock_client.chat.completions.create.side_effect = OpenAIError("rate limit")
+        mock_client.messages.create.side_effect = APIError(
+            message="rate limit", request=MagicMock(), body=None
+        )
         import logging
         with caplog.at_level(logging.WARNING, logger="backend.entities"):
             result = extractor._extract_sync("some transcript")
         assert result["customer_name"] is None
         assert result["keywords"] == []
-        assert any("OpenAI" in r.message for r in caplog.records)
+        assert any("Claude" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_empty_transcript_skips_api(self):
         extractor, mock_client = _make_extractor()
         result = await extractor.extract("")
-        mock_client.chat.completions.create.assert_not_called()
+        mock_client.messages.create.assert_not_called()
         assert result["customer_name"] is None
         assert result["keywords"] == []
 
@@ -140,7 +140,7 @@ class TestEntityExtractor:
             "deal_stage": None,
             "keywords": ["tps", "reports"],
         })
-        mock_client.chat.completions.create.return_value = _make_response(payload)
+        mock_client.messages.create.return_value = _make_response(payload)
         result = await extractor.extract("Initech TPS report discussion")
         assert result["customer_name"] == "Initech"
         assert "tps" in result["keywords"]

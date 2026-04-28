@@ -1,7 +1,4 @@
-"""Extract CRM-relevant entities from transcript text using OpenAI.
-
-Claude is reserved for context management (see backend/context.py),
-so entity extraction runs against an OpenAI chat model in JSON mode.
+"""Extract CRM-relevant entities from transcript text using Claude.
 
 The list of valid Opportunity stages is injected dynamically — the
 :class:`SalesforceClient` discovers the picklist values for the
@@ -16,7 +13,7 @@ import logging
 import re
 from typing import Callable, Sequence, TypedDict
 
-from openai import OpenAI, OpenAIError
+from anthropic import Anthropic, APIError
 
 logger = logging.getLogger(__name__)
 
@@ -64,13 +61,16 @@ def _empty() -> Entities:
 
 
 class EntityExtractor:
+    # Pinned model for entity extraction — short, cheap calls.
+    _DEFAULT_MODEL = "claude-haiku-4-5"
+
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4o-mini",
+        model: str = _DEFAULT_MODEL,
         stage_provider: Callable[[], Sequence[str]] | None = None,
     ):
-        self._client = OpenAI(api_key=api_key)
+        self._client = Anthropic(api_key=api_key)
         self._model = model
         self._stage_provider = stage_provider or (lambda: _DEFAULT_STAGES)
 
@@ -86,20 +86,20 @@ class EntityExtractor:
             stages = _DEFAULT_STAGES
         system_prompt = _build_system_prompt(stages)
         try:
-            resp = self._client.chat.completions.create(
+            msg = self._client.messages.create(
                 model=self._model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": transcript},
-                ],
-                response_format={"type": "json_object"},
                 max_tokens=400,
-                temperature=0.0,
+                system=system_prompt,
+                messages=[{"role": "user", "content": transcript}],
             )
-            raw = (resp.choices[0].message.content or "").strip()
+            raw = "".join(
+                block.text
+                for block in msg.content
+                if getattr(block, "type", "") == "text"
+            ).strip()
             return _parse_json(raw)
-        except OpenAIError as exc:
-            logger.warning("OpenAI entity extraction error: %s", exc)
+        except APIError as exc:
+            logger.warning("Claude entity extraction error: %s", exc)
             return _empty()
 
 
