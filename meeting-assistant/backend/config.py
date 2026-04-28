@@ -1,8 +1,11 @@
 """Centralized configuration loaded from environment variables."""
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigError(RuntimeError):
@@ -23,14 +26,23 @@ def _optional(name: str, default: str) -> str:
     return os.getenv(name) or default
 
 
+def _bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 @dataclass(frozen=True)
 class Config:
-    openai_api_key: str | None
+    openai_api_key: str
     anthropic_api_key: str
-    sf_username: str
-    sf_password: str
-    sf_security_token: str
-    sf_domain: str
+    # Salesforce OAuth 2.0 (Connected App credentials)
+    sf_client_id: str
+    sf_client_secret: str
+    sf_login_url: str          # e.g. https://login.salesforce.com or https://test.salesforce.com
+    # Encryption key for token storage
+    encryption_key: str
     host: str
     port: int
     audio_chunk_seconds: float
@@ -39,6 +51,9 @@ class Config:
     local_whisper_model: str
     local_whisper_device: str
     local_whisper_compute_type: str
+    log_level: str
+    sf_session_timeout_minutes: int
+    skip_startup_validation: bool
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -50,16 +65,35 @@ class Config:
                 f"Choose one of: {', '.join(_VALID_BACKENDS)}."
             )
 
-        # OPENAI_API_KEY is no longer required — entity extraction uses Claude.
-        openai_api_key = os.getenv("OPENAI_API_KEY") or None
+        # OPENAI_API_KEY is always required: entity extraction uses it regardless
+        # of which transcription backend is selected.
+        openai_api_key = _require("OPENAI_API_KEY")
+
+        try:
+            sf_session_timeout = int(_optional("SF_SESSION_TIMEOUT_MINUTES", "30"))
+            if sf_session_timeout <= 0:
+                raise ValueError
+        except ValueError:
+            raise ConfigError(
+                "SF_SESSION_TIMEOUT_MINUTES must be a positive integer."
+            )
+
+        # Determine login URL from SF_DOMAIN (backward compat) or SF_LOGIN_URL.
+        sf_domain = os.getenv("SF_DOMAIN", "").strip()
+        sf_login_url = os.getenv("SF_LOGIN_URL", "").strip()
+        if not sf_login_url:
+            if sf_domain.lower() == "test":
+                sf_login_url = "https://test.salesforce.com"
+            else:
+                sf_login_url = "https://login.salesforce.com"
 
         return cls(
             openai_api_key=openai_api_key,
             anthropic_api_key=_require("ANTHROPIC_API_KEY"),
-            sf_username=_require("SF_USERNAME"),
-            sf_password=_require("SF_PASSWORD"),
-            sf_security_token=_require("SF_SECURITY_TOKEN"),
-            sf_domain=_optional("SF_DOMAIN", "login"),
+            sf_client_id=_require("SF_CLIENT_ID"),
+            sf_client_secret=_require("SF_CLIENT_SECRET"),
+            sf_login_url=sf_login_url,
+            encryption_key=_require("ENCRYPTION_KEY"),
             host=_optional("HOST", "127.0.0.1"),
             port=int(_optional("PORT", "8000")),
             audio_chunk_seconds=float(_optional("AUDIO_CHUNK_SECONDS", "5")),
@@ -68,4 +102,60 @@ class Config:
             local_whisper_model=_optional("LOCAL_WHISPER_MODEL", "base"),
             local_whisper_device=_optional("LOCAL_WHISPER_DEVICE", "cpu"),
             local_whisper_compute_type=_optional("LOCAL_WHISPER_COMPUTE_TYPE", "int8"),
+            log_level=_optional("LOG_LEVEL", "INFO").upper(),
+            sf_session_timeout_minutes=sf_session_timeout,
+            skip_startup_validation=_bool("SKIP_STARTUP_VALIDATION", False),
         )
+
+    @property
+    def oauth_redirect_uri(self) -> str:
+        """The OAuth callback URL. Must match the Connected App exactly."""
+        return f"http://{self.host}:{self.port}/oauth/callback"
+
+
+def validate_credentials(config: Config) -> dict[str, str]:
+    """Run lightweight live checks on the configured credentials.
+
+    Returns a dict of ``{component: status_message}``.  Raises
+    :class:`ConfigError` if a *fatal* problem is detected (currently:
+    Anthropic auth failure only — Salesforce validation happens through
+    the OAuth UI flow, not at startup).
+
+    Skipped entirely when ``SKIP_STARTUP_VALIDATION=1`` is set.
+    """
+    results: dict[str, str] = {}
+
+    if config.skip_startup_validation:
+        logger.info(
+            "SKIP_STARTUP_VALIDATION=1 set; skipping credential live checks."
+        )
+        return {"anthropic": "skipped", "salesforce": "oauth_flow"}
+
+    # ── Anthropic ─────────────────────────────────────────────────────────
+    try:
+        from anthropic import Anthropic, APIError, AuthenticationError
+        client = Anthropic(api_key=config.anthropic_api_key)
+        try:
+            client.models.list(limit=1)
+            results["anthropic"] = "ok"
+            logger.info("Anthropic credential validated.")
+        except AuthenticationError as exc:
+            raise ConfigError(
+                f"ANTHROPIC_API_KEY is invalid: {exc}. "
+                "Check the key in your .env file."
+            )
+        except APIError as exc:
+            logger.warning(
+                "Anthropic auth ping failed transiently (%s); continuing.", exc
+            )
+            results["anthropic"] = f"degraded: {exc}"
+    except ConfigError:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Anthropic validation error: %s", exc)
+        results["anthropic"] = f"degraded: {exc}"
+
+    # Salesforce is validated implicitly through the OAuth UI flow.
+    results["salesforce"] = "oauth_flow"
+
+    return results

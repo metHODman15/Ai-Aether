@@ -104,11 +104,17 @@
 
     <section class="panel chart-panel">
       <h2>Opportunity Stages</h2>
+      <div class="crm-loading-overlay" id="stagePieLoading" hidden>
+        <span class="crm-spinner" aria-label="Loading CRM data…"></span>
+      </div>
       <canvas id="stagePie"></canvas>
     </section>
 
     <section class="panel chart-panel">
       <h2>Deal Amounts Over Time</h2>
+      <div class="crm-loading-overlay" id="amountLineLoading" hidden>
+        <span class="crm-spinner" aria-label="Loading CRM data…"></span>
+      </div>
       <canvas id="amountLine"></canvas>
     </section>
 
@@ -116,11 +122,11 @@
       <h2>Salesforce Records</h2>
       <div class="records-grid">
         <div>
-          <h3>Accounts</h3>
+          <h3>Accounts <span class="crm-list-spinner" id="accountsLoading" hidden aria-label="Loading…"></span></h3>
           <ul id="accounts" class="record-list"><li class="empty">No matches yet</li></ul>
         </div>
         <div>
-          <h3>Opportunities</h3>
+          <h3>Opportunities <span class="crm-list-spinner" id="opportunitiesLoading" hidden aria-label="Loading…"></span></h3>
           <ul id="opportunities" class="record-list"><li class="empty">No matches yet</li></ul>
         </div>
       </div>
@@ -157,6 +163,24 @@
     <div id="docUnits" class="doc-units"></div>
   </div>
 
-  <script src="app.js"></script>
+  <!-- Salesforce OAuth authorization panel. Shown when no valid session exists. -->
+  <div id="authPanel" class="auth-panel" hidden>
+    <div class="auth-panel-inner">
+      <div class="auth-panel-icon">&#9729;</div>
+      <h2 class="auth-panel-title">Connect Salesforce</h2>
+      <p id="authMessage" class="auth-panel-message">
+        Connect your Salesforce org to see live CRM data alongside your transcript.
+      </p>
+      <a id="authConnectBtn" href="/oauth/authorize" class="auth-connect-btn">
+        Connect to Salesforce
+      </a>
+      <p class="auth-panel-note">
+        You'll be redirected to Salesforce to authorize access.<br />
+        Transcription and topic detection continue working without Salesforce.
+      </p>
+    </div>
+  </div>
+
+  <script type="module" src="modules/main.js"></script>
 </body>
 </html>

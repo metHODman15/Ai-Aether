@@ -34,16 +34,21 @@ def _load_app_module():
     for name in ("dotenv", "fastapi", "fastapi.responses", "fastapi.staticfiles",
                  "uvicorn", "backend", "backend.audio", "backend.config",
                  "backend.context", "backend.document_parser", "backend.entities",
-                 "backend.hub", "backend.salesforce_client", "backend.store",
-                 "backend.topic_state", "backend.transcribe"):
+                 "backend.hub", "backend.oauth", "backend.salesforce_client",
+                 "backend.store", "backend.token_store",
+                 "backend.topic_state", "backend.transcribe", "backend.log_utils"):
         mod = types.ModuleType(name)
-        for attr in ("load_dotenv", "FastAPI", "File", "HTTPException", "UploadFile",
-                     "WebSocket", "WebSocketDisconnect", "JSONResponse", "StaticFiles",
+        for attr in ("load_dotenv", "FastAPI", "File", "HTTPException", "Request",
+                     "UploadFile", "WebSocket", "WebSocketDisconnect",
+                     "JSONResponse", "RedirectResponse", "StaticFiles",
                      "run", "microphone_chunks", "Config", "ConfigError",
                      "ContextManager", "DEFAULT_SENSITIVITY", "SENSITIVITY_LEVELS",
                      "parse_document", "EntityExtractor", "ConnectionHub",
-                     "MeetingStore", "SalesforceClient", "TopicState",
-                     "Transcriber", "create_transcriber"):
+                     "OAuthError", "build_authorize_url", "exchange_code",
+                     "MeetingStore", "SalesforceClient", "TokenStore", "TopicState",
+                     "Transcriber", "create_transcriber",
+                     "validate_credentials", "setup_logging", "set_request_id",
+                     "reset_request_id", "new_request_id"):
             setattr(mod, attr, MagicMock())
         stubs[name] = mod
 

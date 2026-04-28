@@ -6,3 +6,7 @@ __pycache__/
 venv/
 .DS_Store
 *.log
+user_settings.json
+meetings.db
+.coverage
+htmlcov/
