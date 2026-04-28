@@ -1,9 +1,8 @@
 """Real-time meeting assistant entry point.
 
 Captures microphone audio, transcribes it with Whisper, uses Claude
-purely to detect topic shifts, extracts CRM entities with OpenAI,
-queries Salesforce, and broadcasts everything to a local browser
-dashboard via WebSockets.
+to detect topic shifts and extract CRM entities, queries Salesforce,
+and broadcasts everything to a local browser dashboard via WebSockets.
 """
 from __future__ import annotations
 
