@@ -1,15 +1,15 @@
 # Meeting Assistant
 
 A local, real-time meeting assistant that listens to your microphone,
-transcribes the conversation with local Whisper (faster-whisper), uses
-Anthropic Claude for **both topic-shift detection and CRM entity
-extraction**, queries your Salesforce org through the REST API, and
-visualises everything on a live web dashboard that stays pinned to the
-current topic.
+transcribes the conversation with OpenAI Whisper, uses Anthropic Claude
+for **conversation context management** (detecting when the topic
+shifts), extracts CRM entities with OpenAI, queries your Salesforce org
+through the REST API, and visualises everything on a live web dashboard
+that stays pinned to the current topic.
 
-Only one API key is required: your **Anthropic API key**. No OpenAI key needed.
-
-Everything runs locally on your machine. No data is stored on disk.
+Everything runs locally on your machine. OAuth tokens are encrypted and stored in
+`meetings.db`; no audio or transcript data is sent to a remote server (except to the
+OpenAI or Anthropic APIs as described below).
 
 ## How topics work
 
@@ -26,8 +26,9 @@ products. The assistant treats each subject as a **topic**:
   the new topic label, and renders fresh data from the next Salesforce
   query.
 
-CRM entity extraction (customer, contact, deal amount, stage) also runs
-through Claude (`claude-haiku-4-5`), reusing the same Anthropic API key.
+CRM entity extraction (customer, contact, deal amount, stage) runs
+against an OpenAI chat model, keeping Claude reserved for context
+management.
 
 ## Transcription backends
 
@@ -85,15 +86,16 @@ use an NVIDIA GPU.
 | Latency | Network round-trip | CPU/GPU speed — can be slower than `base` on old hardware |
 | Privacy | Audio sent to OpenAI | Audio never leaves the machine |
 
-> **Note:** `OPENAI_API_KEY` is not required. Both topic-shift detection and
-> CRM entity extraction use the Anthropic API (`ANTHROPIC_API_KEY`).
+> **Note:** `OPENAI_API_KEY` is still required even in local mode because CRM
+> entity extraction always uses the OpenAI chat API.
 
 ## Requirements
 
 - Python 3.10 or newer
 - A working microphone
-- An **Anthropic API key** (Claude — topic-shift detection and entity extraction)
-- Salesforce username, password, and security token
+- An OpenAI API key (entity extraction; also Whisper when using the default `openai` backend)
+- An Anthropic API key (Claude — used only for topic detection)
+- A Salesforce Connected App (Consumer Key + Consumer Secret)
 
 On Linux you may need PortAudio system libraries for microphone capture:
 
@@ -117,7 +119,7 @@ dependencies, and walks you through filling in every credential.
 
 ```bash
 git clone <your-fork-url>
-cd Ai-Aether/meeting-assistant
+cd meeting-assistant
 bash setup.sh
 ```
 
@@ -125,7 +127,7 @@ bash setup.sh
 
 ```powershell
 git clone <your-fork-url>
-cd Ai-Aether\meeting-assistant
+cd meeting-assistant
 .\setup.ps1
 ```
 
@@ -136,13 +138,13 @@ cd Ai-Aether\meeting-assistant
 After the script finishes, start the app with:
 
 ```bash
-# macOS / Linux (run from Ai-Aether root)
+# macOS / Linux
 source .venv/bin/activate
-python3 meeting-assistant/app.py
+python app.py
 
-# Windows (run from Ai-Aether root)
+# Windows
 .\.venv\Scripts\Activate.ps1
-python meeting-assistant/app.py
+python app.py
 ```
 
 ---
@@ -151,24 +153,23 @@ python meeting-assistant/app.py
 
 ```bash
 git clone <your-fork-url>
-cd Ai-Aether
-python3 -m venv .venv && source .venv/bin/activate   # optional but recommended
-pip install -r meeting-assistant/requirements.txt
-pip install faster-whisper
-cp meeting-assistant/.env.example meeting-assistant/.env
-# edit meeting-assistant/.env and fill in your keys
+cd meeting-assistant
+python -m venv .venv && source .venv/bin/activate   # optional but recommended
+pip install -r requirements.txt
+cp .env.example .env
+# edit .env and fill in your keys
 ```
 
 ### Environment variables
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | no | Not required — entity extraction now uses Claude |
-| `ANTHROPIC_API_KEY` | yes | Anthropic API key — used for topic-shift detection **and** CRM entity extraction |
-| `SF_USERNAME` | yes | Salesforce login email |
-| `SF_PASSWORD` | yes | Salesforce password |
-| `SF_SECURITY_TOKEN` | yes | Salesforce security token (sent to your email by Salesforce) |
-| `SF_DOMAIN` | no | `login` (default) for production orgs, `test` for sandboxes |
+| `OPENAI_API_KEY` | yes | OpenAI API key — used for entity extraction; also for Whisper when `WHISPER_BACKEND=openai` |
+| `ANTHROPIC_API_KEY` | yes | Anthropic API key — used **only** for topic-shift detection |
+| `SF_CLIENT_ID` | yes | Salesforce Connected App Consumer Key |
+| `SF_CLIENT_SECRET` | yes | Salesforce Connected App Consumer Secret |
+| `SF_LOGIN_URL` | no | `https://login.salesforce.com` (default) for production orgs, `https://test.salesforce.com` for sandboxes. Also reads legacy `SF_DOMAIN=test` for backwards compatibility |
+| `ENCRYPTION_KEY` | yes | Arbitrary secret used to encrypt OAuth tokens at rest. Generate with `python -c "import secrets; print(secrets.token_hex(32))"`. Changing this value invalidates stored tokens |
 | `HOST` | no | Bind address for the web server (default `127.0.0.1`) |
 | `PORT` | no | Port for the web server (default `8000`) |
 | `AUDIO_CHUNK_SECONDS` | no | Seconds of audio per Whisper request (default `5`) |
@@ -177,12 +178,22 @@ cp meeting-assistant/.env.example meeting-assistant/.env
 | `LOCAL_WHISPER_MODEL` | no | Model size for the local backend: `tiny`, `base` (default), `small`, `medium`, `large-v2`, `large-v3` |
 | `LOCAL_WHISPER_DEVICE` | no | `cpu` (default) or `cuda` for the local backend |
 | `LOCAL_WHISPER_COMPUTE_TYPE` | no | Quantisation type for the local backend: `int8` (default, CPU), `float16` (GPU) |
+| `LOG_LEVEL` | no | Logging verbosity: `DEBUG`, `INFO` (default), `WARNING`, `ERROR`. Each log line carries a per-chunk `request_id` to trace one audio chunk end-to-end |
+| `SF_SESSION_TIMEOUT_MINUTES` | no | Salesforce idle timeout in minutes (default `30`). After this much idle time the next CRM query proactively refreshes the OAuth token |
+| `SKIP_STARTUP_VALIDATION` | no | Set to `1` to skip the Anthropic credential ping at startup (default `0`). Salesforce is validated through the OAuth UI flow — not at boot |
+
+### Salesforce Connected App setup
+
+1. In Salesforce Setup, go to **App Manager → New Connected App**.
+2. Enable OAuth and add the callback URL: `http://localhost:8000/oauth/callback` (adjust the port if you changed `PORT`).
+3. Add these OAuth scopes: **api**, **refresh_token**, **offline_access**.
+4. Copy the **Consumer Key** → `SF_CLIENT_ID` and **Consumer Secret** → `SF_CLIENT_SECRET` in your `.env`.
+5. Start the app and click **Connect to Salesforce** in the browser to authorize.
 
 ## Run
 
 ```bash
-# From the Ai-Aether root with .venv active
-python3 meeting-assistant/app.py
+python app.py
 ```
 
 Open <http://127.0.0.1:8000> in your browser. As soon as the page loads
@@ -203,9 +214,9 @@ Stop the server with `Ctrl+C`.
 ## How it works
 
 ```
-mic → backend/audio.py → backend/transcribe.py     (faster-whisper — local)
+mic → backend/audio.py → backend/transcribe.py     (Whisper)
                        → backend/context.py        (Claude — topic shift?)
-                       → backend/entities.py       (Claude — extract CRM entities)
+                       → backend/entities.py       (OpenAI — extract CRM entities)
                        → backend/topic_state.py    (merge into current topic)
                        → backend/salesforce_client.py (REST API)
                        → backend/hub.py → WebSocket → frontend/
@@ -225,17 +236,20 @@ meeting-assistant/
 ├── app.py                    FastAPI server + capture/transcribe pipeline
 ├── backend/
 │   ├── audio.py              Microphone capture (sounddevice)
-│   ├── transcribe.py         faster-whisper local transcription
+│   ├── transcribe.py         OpenAI Whisper wrapper
 │   ├── context.py            Anthropic Claude — topic-shift detection
-│   ├── entities.py           Anthropic Claude — CRM entity extraction
+│   ├── entities.py           OpenAI — CRM entity extraction
 │   ├── topic_state.py        In-memory current-topic state
 │   ├── salesforce_client.py  Salesforce REST queries + aggregations
-│   ├── hub.py                WebSocket broadcast hub
-│   └── config.py             Env-var loading and validation
+│   ├── hub.py                WebSocket broadcast hub with per-client backpressure
+│   ├── log_utils.py          Structured logging + per-chunk request_id propagation
+│   └── config.py             Env-var loading + startup credential validation
 ├── frontend/
-│   ├── index.html            Dashboard markup
+│   ├── index.html            Dashboard markup (loads modules/main.js as ES module)
 │   ├── styles.css            Dashboard styling
-│   └── app.js                WebSocket client + Chart.js charts
+│   └── modules/              ES6 modules: state, dom, utils, charts, entities,
+│       │                     transcript, history, settings, document, events,
+│       │                     crm_banner, websocket, demo, main
 ├── requirements.txt          Pinned Python dependencies
 ├── .env.example              Template for required environment variables
 └── README.md
@@ -248,11 +262,36 @@ meeting-assistant/
 - **No microphone detected / PortAudio errors** — install the system
   PortAudio package as noted above and ensure your OS allows mic access
   for the terminal.
-- **Salesforce auth fails** — confirm your security token is current;
-  reset it in Salesforce under "My Personal Information → Reset My
-  Security Token". Sandbox orgs require `SF_DOMAIN=test`.
+- **Salesforce authorization required** — open the app in a browser and
+  click **Connect to Salesforce**. You'll be redirected to Salesforce to
+  authorize. Sandbox orgs: set `SF_LOGIN_URL=https://test.salesforce.com`.
 - **Topic never shifts** — Claude treats small tangents as "same topic"
   on purpose. Shifts happen when the subject (customer, deal, product)
   clearly changes.
 - **Empty charts** — the dashboard only shows data when entities match
   Accounts or Opportunities in your org.
+- **Salesforce went offline mid-meeting** — the dashboard surfaces a
+  red "Salesforce is offline" banner at the top of the page and dims
+  the CRM panels. Whisper transcription and Claude topic-shift
+  detection keep running. The banner clears automatically once the
+  next CRM query succeeds.
+- **WebSocket dropped** — the status badge shows "Reconnecting…" with
+  exponential backoff (1s → 30s) until the server is reachable again.
+  Cached topics, entities, and CRM data stay on screen the entire
+  time; nothing is lost across a brief disconnect.
+
+## Operational notes
+
+- **Per-chunk request IDs.** Every log line emitted while processing a
+  single audio chunk carries the same short `request_id`, so you can
+  `grep` one chunk's full trace through transcribe → topic-shift →
+  entities → Salesforce.
+- **Backpressure.** Each WebSocket client has a bounded send queue
+  (depth 50). If a client is slow, the oldest *non-critical* event is
+  dropped; `topic_shift`, `error`, `crm_offline`, `crm_online`, and
+  document lifecycle events are always preserved.
+- **Startup validation.** On boot the app pings Anthropic. An invalid
+  Anthropic key aborts startup; Salesforce is validated lazily through
+  the OAuth UI flow so the meeting can still be transcribed even before
+  authorization. Set `SKIP_STARTUP_VALIDATION=1` to bypass the Anthropic
+  check (useful for offline development).

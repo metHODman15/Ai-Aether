@@ -1,2 +1,9 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Playwright e2e tests live in tests/e2e/ and are excluded from the default
+# run because the Playwright session fixtures use their own asyncio event
+# loop that conflicts with pytest-asyncio.  Run them explicitly:
+#   python3 -m pytest tests/e2e/
+addopts = "--ignore=tests/e2e --cov=backend --cov-report=term-missing --cov-fail-under=70"
+asyncio_mode = "auto"
+
