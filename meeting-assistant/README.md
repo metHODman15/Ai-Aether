@@ -2,10 +2,9 @@
 
 A local, real-time meeting assistant that listens to your microphone,
 transcribes the conversation with OpenAI Whisper, uses Anthropic Claude
-for **conversation context management** (detecting when the topic
-shifts), extracts CRM entities with OpenAI, queries your Salesforce org
-through the REST API, and visualises everything on a live web dashboard
-that stays pinned to the current topic.
+for **topic-shift detection** and **CRM entity extraction**, queries
+your Salesforce org through the REST API, and visualises everything on
+a live web dashboard that stays pinned to the current topic.
 
 Everything runs locally on your machine. OAuth tokens are encrypted and stored in
 `meetings.db`; no audio or transcript data is sent to a remote server (except to the
@@ -26,9 +25,9 @@ products. The assistant treats each subject as a **topic**:
   the new topic label, and renders fresh data from the next Salesforce
   query.
 
-CRM entity extraction (customer, contact, deal amount, stage) runs
-against an OpenAI chat model, keeping Claude reserved for context
-management.
+CRM entity extraction (customer, contact, deal amount, stage) also
+runs on Claude (Haiku), so no OpenAI key is needed beyond Whisper
+transcription.
 
 ## Transcription backends
 
@@ -86,15 +85,16 @@ use an NVIDIA GPU.
 | Latency | Network round-trip | CPU/GPU speed — can be slower than `base` on old hardware |
 | Privacy | Audio sent to OpenAI | Audio never leaves the machine |
 
-> **Note:** `OPENAI_API_KEY` is still required even in local mode because CRM
-> entity extraction always uses the OpenAI chat API.
+> **Note:** `OPENAI_API_KEY` is **not** required in local mode. Entity
+> extraction uses the Anthropic API; only Whisper transcription needs an
+> OpenAI key.
 
 ## Requirements
 
 - Python 3.10 or newer
 - A working microphone
-- An OpenAI API key (entity extraction; also Whisper when using the default `openai` backend)
-- An Anthropic API key (Claude — used only for topic detection)
+- An Anthropic API key (Claude — topic-shift detection and entity extraction)
+- An OpenAI API key (Whisper transcription only — required when `WHISPER_BACKEND=openai`, the default; not needed for the local backend)
 - A Salesforce Connected App (Consumer Key + Consumer Secret)
 
 On Linux you may need PortAudio system libraries for microphone capture:
@@ -164,8 +164,8 @@ cp .env.example .env
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | yes | OpenAI API key — used for entity extraction; also for Whisper when `WHISPER_BACKEND=openai` |
-| `ANTHROPIC_API_KEY` | yes | Anthropic API key — used **only** for topic-shift detection |
+| `ANTHROPIC_API_KEY` | yes | Anthropic API key — Claude powers both topic-shift detection and CRM entity extraction |
+| `OPENAI_API_KEY` | openai backend only | OpenAI API key — Whisper transcription only. Required when `WHISPER_BACKEND=openai` (the default). **Not required** when `WHISPER_BACKEND=local` |
 | `SF_CLIENT_ID` | yes | Salesforce Connected App Consumer Key |
 | `SF_CLIENT_SECRET` | yes | Salesforce Connected App Consumer Secret |
 | `SF_LOGIN_URL` | no | `https://login.salesforce.com` (default) for production orgs, `https://test.salesforce.com` for sandboxes. Also reads legacy `SF_DOMAIN=test` for backwards compatibility |
@@ -216,7 +216,7 @@ Stop the server with `Ctrl+C`.
 ```
 mic → backend/audio.py → backend/transcribe.py     (Whisper)
                        → backend/context.py        (Claude — topic shift?)
-                       → backend/entities.py       (OpenAI — extract CRM entities)
+                       → backend/entities.py       (Claude Haiku — extract CRM entities)
                        → backend/topic_state.py    (merge into current topic)
                        → backend/salesforce_client.py (REST API)
                        → backend/hub.py → WebSocket → frontend/
@@ -238,7 +238,7 @@ meeting-assistant/
 │   ├── audio.py              Microphone capture (sounddevice)
 │   ├── transcribe.py         OpenAI Whisper wrapper
 │   ├── context.py            Anthropic Claude — topic-shift detection
-│   ├── entities.py           OpenAI — CRM entity extraction
+│   ├── entities.py           Anthropic Claude Haiku — CRM entity extraction
 │   ├── topic_state.py        In-memory current-topic state
 │   ├── salesforce_client.py  Salesforce REST queries + aggregations
 │   ├── hub.py                WebSocket broadcast hub with per-client backpressure
