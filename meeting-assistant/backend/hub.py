@@ -219,3 +219,15 @@ class ConnectionHub:
 
         for channel in channels:
             await channel.offer(event, payload)
+
+        # Prune channels that closed during this or a previous broadcast.
+        # A failed send marks the channel _closed=True in run(); leaving it in
+        # _channels would leak memory until an explicit disconnect() arrives.
+        async with self._lock:
+            closed_ws = [ws for ws, ch in self._channels.items() if ch._closed]
+            for ws in closed_ws:
+                ch = self._channels.pop(ws)
+                logger.info(
+                    "Hub: auto-evicted closed channel %s from _channels after send failure",
+                    ch.id,
+                )

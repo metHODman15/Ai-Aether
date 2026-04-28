@@ -164,3 +164,48 @@ def test_sf_domain_test_maps_to_sandbox_url(monkeypatch):
     monkeypatch.delenv("SF_LOGIN_URL", raising=False)
     cfg = Config.from_env()
     assert cfg.sf_login_url == "https://test.salesforce.com"
+
+
+def test_sf_domain_login_explicitly_maps_to_production_url(monkeypatch):
+    """SF_DOMAIN=login (written by old setup scripts) must explicitly map to
+    https://login.salesforce.com — not rely on a silent else-branch fallback."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-x")
+    monkeypatch.setenv("SF_CLIENT_ID", "cid")
+    monkeypatch.setenv("SF_CLIENT_SECRET", "csec")
+    monkeypatch.setenv("ENCRYPTION_KEY", "c" * 64)
+    monkeypatch.setenv("SF_DOMAIN", "login")
+    monkeypatch.delenv("SF_LOGIN_URL", raising=False)
+    cfg = Config.from_env()
+    assert cfg.sf_login_url == "https://login.salesforce.com"
+
+
+def test_sf_domain_custom_maps_to_custom_subdomain(monkeypatch):
+    """An unknown SF_DOMAIN value (e.g. a My Domain name) must map to
+    https://<domain>.salesforce.com rather than silently falling back to
+    production."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-x")
+    monkeypatch.setenv("SF_CLIENT_ID", "cid")
+    monkeypatch.setenv("SF_CLIENT_SECRET", "csec")
+    monkeypatch.setenv("ENCRYPTION_KEY", "d" * 64)
+    monkeypatch.setenv("SF_DOMAIN", "mycompany")
+    monkeypatch.delenv("SF_LOGIN_URL", raising=False)
+    cfg = Config.from_env()
+    assert cfg.sf_login_url == "https://mycompany.salesforce.com"
+
+
+def test_openai_api_key_not_required_for_local_whisper(monkeypatch):
+    """OPENAI_API_KEY must not be required when WHISPER_BACKEND=local;
+    entity extraction uses ANTHROPIC_API_KEY, not OpenAI."""
+    monkeypatch.setenv("WHISPER_BACKEND", "local")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-x")
+    monkeypatch.setenv("SF_CLIENT_ID", "cid")
+    monkeypatch.setenv("SF_CLIENT_SECRET", "csec")
+    monkeypatch.setenv("ENCRYPTION_KEY", "e" * 64)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("SF_DOMAIN", raising=False)
+    monkeypatch.delenv("SF_LOGIN_URL", raising=False)
+    cfg = Config.from_env()
+    assert cfg.openai_api_key == ""
+    assert cfg.whisper_backend == "local"

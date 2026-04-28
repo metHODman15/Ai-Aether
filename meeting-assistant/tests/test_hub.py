@@ -83,10 +83,9 @@ async def test_broadcast_trims_history_at_max():
 async def test_failed_send_silently_closes_channel_and_drops_future_messages():
     """A client whose send_text raises must be silently dropped from the active set.
 
-    Design note: ConnectionHub does not automatically evict the WebSocket from
-    _channels on send failure — it stays until disconnect() is called. "Dropped
-    from the active set" means the channel is marked closed so future offer()
-    calls return False and subsequent broadcasts do not propagate messages to it.
+    When a send fails the channel marks itself _closed=True. The *next* call to
+    broadcast() auto-evicts the closed channel from _channels, preventing a
+    memory leak from accumulating stale entries until disconnect() arrives.
     """
     hub = ConnectionHub()
     ws_bad = _FakeWebSocket(fail_on_send=True)
@@ -103,7 +102,8 @@ async def test_failed_send_silently_closes_channel_and_drops_future_messages():
 
     assert channel._closed is True, "Channel must mark itself closed after send failure"
 
-    # Subsequent broadcast must not raise and must silently skip the failed client
+    # Subsequent broadcast must not raise and must silently skip the failed client.
+    # It also auto-evicts the closed channel from _channels to prevent memory leaks.
     follow_up = {"type": "transcript", "text": "follow-up"}
     await hub.broadcast(follow_up)  # must not raise
 
@@ -111,12 +111,14 @@ async def test_failed_send_silently_closes_channel_and_drops_future_messages():
     result = await channel.offer(follow_up, "{}")
     assert result is False, "Closed channel must reject further offers silently"
 
-    # ws_bad is still in _channels (design: eviction requires explicit disconnect)
-    assert ws_bad in hub._channels, "Automatic eviction is explicit-disconnect-only by design"
+    # After the follow-up broadcast, the closed channel must be auto-evicted.
+    assert ws_bad not in hub._channels, (
+        "broadcast() must auto-evict closed channels to prevent memory leaks"
+    )
 
+    # disconnect() on an already-evicted ws is a safe no-op.
     await hub.disconnect(ws_bad)
-    # After explicit disconnect, ws_bad is removed from the active channel map
-    assert ws_bad not in hub._channels, "disconnect() must evict the ws from _channels"
+    assert ws_bad not in hub._channels
 
     await hub.disconnect(ws_good)
 
