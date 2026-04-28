@@ -60,6 +60,9 @@ export const dom = {
 
   // CRM-offline banner — created lazily in main.js if missing.
   crmBanner: $("crmBanner"),
+
+  // Transcription-error banner — created lazily by transcription_error_banner.js.
+  transcriptionErrorBanner: $("transcriptionErrorBanner"),
 };
 
 if (dom.topic) dom.topicLabel = dom.topic.querySelector(".topic-label");

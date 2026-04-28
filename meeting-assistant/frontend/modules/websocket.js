@@ -104,3 +104,13 @@ export function connect() {
 export function resetReconnectBackoff() {
   backoffMs = MIN_BACKOFF_MS;
 }
+
+/**
+ * Send a JSON message over the open WebSocket.
+ * Silently no-ops if the socket is not yet open.
+ */
+export function sendMessage(payload) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(payload));
+  }
+}

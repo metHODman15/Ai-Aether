@@ -970,6 +970,44 @@ body.crm-offline .chart-panel {
   pointer-events: none;
 }
 
+/* ── Transcription-error banner ─────────────────────────────────────────── */
+.transcription-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.16), rgba(251, 191, 36, 0.06));
+  border-bottom: 1px solid rgba(251, 191, 36, 0.4);
+  color: #fde68a;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.transcription-error-banner[hidden] { display: none; }
+.te-banner-icon {
+  font-style: normal;
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+.te-banner-text {
+  flex: 1;
+}
+.te-banner-retry {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: 4px;
+  background: transparent;
+  color: #fde68a;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.te-banner-retry:hover {
+  background: rgba(251, 191, 36, 0.15);
+}
+
 /* ── CRM slow-query loading indicators ──────────────────────────────── */
 @keyframes crm-spin {
   to { transform: rotate(360deg); }

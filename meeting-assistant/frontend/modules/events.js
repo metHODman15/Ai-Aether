@@ -16,6 +16,7 @@ import {
   showDocError, appendDocUnit, appendDocUnitError, requestDocSummary,
 } from "./document.js";
 import { setCrmStatus } from "./crm_banner.js";
+import { recordTranscriptionError, clearTranscriptionErrors } from "./transcription_error_banner.js";
 
 export function handleEvent(evt) {
   if (evt.type === "document_error") {
@@ -57,6 +58,7 @@ export function handleEvent(evt) {
   }
 
   if (evt.type === "topic_shift") {
+    clearTranscriptionErrors();
     startNewTopic(evt.label, evt.ts, evt.meeting_id || null);
     state.viewingId = null;
     updateHistoryModeUi(); renderViewedTopic(); renderHistoryList();
@@ -68,6 +70,9 @@ export function handleEvent(evt) {
     const t = currentTopic();
     if (!t) return;
     if (evt.topic_label && evt.topic_label !== t.label) return;
+    // Clear error banner only after we know this transcript belongs to the
+    // current topic, so stale or out-of-topic events don't give a false signal.
+    clearTranscriptionErrors();
     t.lines.push({ ts: evt.ts, text: evt.text });
     if (t.lines.length > MAX_LINES_PER_TOPIC) {
       t.lines.splice(0, t.lines.length - MAX_LINES_PER_TOPIC);
@@ -148,7 +153,12 @@ export function handleEvent(evt) {
       }
       scheduleSave();
     }
-    if (isViewingLive()) {
+    // For transcription-pipeline stages, show the friendly collapsed banner
+    // instead of a raw red line in the live view. Mark the stored line so
+    // renderTranscriptLines can also skip it on a full re-render.
+    const handledByBanner = recordTranscriptionError(evt.stage);
+    if (handledByBanner) errLine.bannerHandled = true;
+    if (!handledByBanner && isViewingLive()) {
       const placeholder = dom.transcript.querySelector(".empty-state");
       if (placeholder) placeholder.remove();
       const line = document.createElement("div");

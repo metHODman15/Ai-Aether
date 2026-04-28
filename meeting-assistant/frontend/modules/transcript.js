@@ -47,6 +47,9 @@ export function renderTranscriptLines(lines, headerLabel, headerNote) {
     dom.transcript.appendChild(empty);
   } else {
     for (const line of lines) {
+      // Skip lines that were already surfaced as a banner in the live view
+      // (transcription-stage errors); they carry no extra value as raw red text.
+      if (line.bannerHandled) continue;
       if (line.error) {
         const el = document.createElement("div");
         el.className = "line error";
