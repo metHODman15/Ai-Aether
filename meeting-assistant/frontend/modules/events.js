@@ -100,6 +100,11 @@ export function handleEvent(evt) {
 
   if (evt.type === "crm") {
     hideCrmLoading();
+    // Receiving CRM data is itself proof that Salesforce was reachable
+    // just now, so seed the "Last connected …" timestamp the offline
+    // banner will surface if connectivity later drops. Mirrors the
+    // assignment in the crm_online handler.
+    state.crmLastOnlineAt = Date.now();
     const t = currentTopic();
     if (!t) return;
     if (evt.topic_label && evt.topic_label !== t.label) return;
@@ -136,6 +141,9 @@ export function handleEvent(evt) {
   }
 
   if (evt.type === "crm_online") {
+    // Record the moment Salesforce came back so the offline banner can
+    // show "Last connected …" if connectivity drops again later.
+    state.crmLastOnlineAt = Date.now();
     setCrmStatus(true);
     return;
   }

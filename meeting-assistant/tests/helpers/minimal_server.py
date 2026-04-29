@@ -68,6 +68,93 @@ async def inject_topic(payload: dict) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+@app.post("/inject/crm")
+async def inject_crm(payload: dict) -> JSONResponse:
+    """Test-only: broadcast a crm_offline / crm_online event.
+
+    Lets the dashboard e2e tests exercise the offline banner without
+    spinning up the full Salesforce MCP stack.
+    """
+    online = bool(payload.get("online", False))
+    event: dict
+    if online:
+        event = {"type": "crm_online", "ts": time.time()}
+    else:
+        event = {
+            "type": "crm_offline",
+            "ts": time.time(),
+            "reason": payload.get("reason", "Salesforce is unreachable"),
+        }
+    await hub.broadcast(event)
+    return JSONResponse({"ok": True})
+
+
+# Retry-button test fixtures. ``_retry_state`` lets the e2e test script the
+# response of the next ``POST /salesforce/retry`` (success → also broadcasts
+# ``crm_online`` so the banner hides; failure → stays offline). ``cached``
+# and ``age_seconds`` mirror the production contract so the dashboard can
+# render its "Just checked Xs ago" hint when the backend coalesces a click
+# into a recent probe. ``calls`` counts invocations so the test can assert
+# the click reached the backend.
+_retry_state: dict = {
+    "online": False,
+    "delay": 0.0,
+    "cached": False,
+    "age_seconds": 0.0,
+    "calls": 0,
+}
+
+
+@app.post("/configure/retry")
+async def configure_retry(payload: dict) -> JSONResponse:
+    """Test-only: configure the next ``/salesforce/retry`` response."""
+    _retry_state["online"] = bool(payload.get("online", False))
+    try:
+        _retry_state["delay"] = float(payload.get("delay", 0.0))
+    except (TypeError, ValueError):
+        _retry_state["delay"] = 0.0
+    _retry_state["cached"] = bool(payload.get("cached", False))
+    try:
+        _retry_state["age_seconds"] = float(payload.get("age_seconds", 0.0))
+    except (TypeError, ValueError):
+        _retry_state["age_seconds"] = 0.0
+    _retry_state["calls"] = 0
+    return JSONResponse({"ok": True})
+
+
+@app.get("/configure/retry")
+async def configure_retry_state() -> JSONResponse:
+    return JSONResponse({"calls": _retry_state["calls"]})
+
+
+@app.post("/salesforce/retry")
+async def salesforce_retry() -> JSONResponse:
+    """Test-only stand-in for the production retry endpoint.
+
+    Mirrors the production contract: returns
+    ``{"online": bool, "cached": bool, "age_seconds": float}`` and, on a
+    fresh success (``cached=False``), broadcasts a ``crm_online`` event
+    the way ``probe_once`` would. A coalesced response intentionally does
+    NOT broadcast — the underlying probe already did so on its first run.
+    The configurable delay lets the test verify the button stays disabled
+    while a probe is in flight.
+    """
+    _retry_state["calls"] += 1
+    if _retry_state["delay"] > 0:
+        await asyncio.sleep(_retry_state["delay"])
+    online = _retry_state["online"]
+    cached = _retry_state["cached"]
+    if online and not cached:
+        await hub.broadcast({"type": "crm_online", "ts": time.time()})
+    return JSONResponse(
+        {
+            "online": online,
+            "cached": cached,
+            "age_seconds": _retry_state["age_seconds"],
+        }
+    )
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     if _ws_connect_delay > 0:

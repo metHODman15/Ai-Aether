@@ -152,15 +152,21 @@ if (Test-Path ".env") {
     }
 
     Write-Host ""
-    Write-Host "── Salesforce OAuth (Connected App) ──────────────────" -ForegroundColor Cyan
-    Write-Host "  Create a Connected App in Salesforce Setup -> App Manager."
-    Write-Host "  Set the callback URL to: http://localhost:8000/oauth/callback"
-    Write-Host "  (adjust the port if you change PORT below)"
+    Write-Host "── Salesforce External Client App + Hosted MCP Server ─" -ForegroundColor Cyan
+    Write-Host "  1. In Salesforce Setup -> External Client Apps -> New External Client App."
+    Write-Host "  2. Enable OAuth, set callback URL: http://localhost:8000/oauth/callback"
+    Write-Host "     (adjust the port to match PORT below if you change it)"
+    Write-Host "  3. Enable PKCE ('Require Proof Key for Code Exchange')."
+    Write-Host "  4. Add scopes: api  refresh_token  offline_access"
+    Write-Host "  5. For a public ECA (recommended): leave the Consumer Secret blank below."
+    Write-Host "     For a confidential ECA: paste the Consumer Secret when prompted."
+    Write-Host "  6. Copy the Hosted Salesforce MCP Server endpoint (Setup -> MCP Servers)."
     Write-Host ""
-    $lineSfClientId     = Prompt-Required "SF_CLIENT_ID"     "Salesforce Connected App Consumer Key"
-    $lineSfClientSecret = Prompt-Required "SF_CLIENT_SECRET" "Salesforce Connected App Consumer Secret"
-    $lineSfLoginUrl     = Prompt-Optional "SF_LOGIN_URL"     "Salesforce login URL" "https://login.salesforce.com"
-    $lineEncKey         = Prompt-EncryptionKey
+    $lineSfClientId       = Prompt-Required "SF_CLIENT_ID"        "External Client App Consumer Key"
+    $lineSfClientSecret   = Prompt-Optional "SF_CLIENT_SECRET"    "Consumer Secret (blank for public ECA)" ""
+    $lineSfMcpServerUrl   = Prompt-Required "SF_MCP_SERVER_URL"   "Salesforce Hosted MCP Server endpoint URL"
+    $lineSfLoginUrl       = Prompt-Optional "SF_LOGIN_URL"        "Salesforce login URL" "https://login.salesforce.com"
+    $lineEncKey           = Prompt-EncryptionKey
 
     Write-Host ""
     Write-Host "── Server Settings (optional) ────────────────────────" -ForegroundColor Cyan
@@ -185,9 +191,12 @@ $lineOpenAI
 # Transcription backend: "openai" (default) or "local" (faster-whisper, on-device)
 $lineWhisperBackend
 
-# Salesforce OAuth 2.0 — Connected App credentials
+# Salesforce OAuth 2.0 — External Client App (ECA) + PKCE
 $lineSfClientId
+# Public ECAs leave SF_CLIENT_SECRET blank; PKCE proves identity instead.
 $lineSfClientSecret
+# Salesforce Hosted MCP Server endpoint (Streamable HTTP). Required.
+$lineSfMcpServerUrl
 # "https://login.salesforce.com" for production orgs, "https://test.salesforce.com" for sandboxes
 $lineSfLoginUrl
 

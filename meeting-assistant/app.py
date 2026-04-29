@@ -35,8 +35,9 @@ from backend.log_utils import (
     set_request_id,
     setup_logging,
 )
+from backend.mcp_client import SalesforceMCPClient
 from backend.oauth import OAuthError, build_authorize_url, exchange_code
-from backend.salesforce_client import SalesforceClient
+from backend.pkce import generate_pkce_pair, generate_state
 from backend.store import MeetingStore
 from backend.token_store import TokenStore
 from backend.topic_state import TopicState
@@ -228,7 +229,7 @@ async def pipeline_loop(
     transcriber: Transcriber,
     context_mgr: ContextManager,
     extractor: EntityExtractor,
-    sf_client: SalesforceClient,
+    sf_client: SalesforceMCPClient,
     hub: ConnectionHub,
     settings: Settings,
     store: MeetingStore,
@@ -426,16 +427,35 @@ def build_app(config: Config) -> FastAPI:
             "ts": time.time(),
         })
 
-    sf_client = SalesforceClient(
+    sf_client = SalesforceMCPClient(
         token_store=token_store,
         sf_client_id=config.sf_client_id,
         sf_client_secret=config.sf_client_secret,
+        mcp_server_url=config.sf_mcp_server_url,
         sf_login_url=config.sf_login_url,
+        scopes=config.sf_mcp_scopes,
         idle_refresh_seconds=config.sf_session_timeout_minutes * 60,
+        mcp_timeout_seconds=config.sf_mcp_timeout_seconds,
         on_status_change=_on_sf_status_change,
         on_loading=_on_sf_loading,
         on_auth_required=_on_sf_auth_required,
     )
+
+    # PKCE state map: state token → (code_verifier, created_at_epoch).
+    # Each /oauth/authorize entry expires after _PKCE_STATE_TTL seconds; the
+    # entry is consumed on /oauth/callback. We also sweep the map on every
+    # callback so abandoned entries (closed browser tabs etc.) don't leak.
+    _pkce_states: dict[str, tuple[str, float]] = {}
+    _PKCE_STATE_TTL_SECONDS = 600  # 10 minutes — covers typical SSO redirects
+
+    def _sweep_pkce_states(now: float) -> None:
+        cutoff = now - _PKCE_STATE_TTL_SECONDS
+        stale = [s for s, (_, ts) in _pkce_states.items() if ts < cutoff]
+        for s in stale:
+            _pkce_states.pop(s, None)
+        if stale:
+            logger.info("Pruned %d stale PKCE state entries", len(stale))
+
     extractor = EntityExtractor(
         api_key=config.anthropic_api_key,
         stage_provider=sf_client.get_stage_names,
@@ -467,14 +487,22 @@ def build_app(config: Config) -> FastAPI:
                 store, session_id,
             )
         )
+        # Background liveness probe: while Salesforce is offline due to an
+        # MCP timeout, periodically reopen a short MCP session and call
+        # list_tools() so the dashboard flips back to green automatically
+        # once Salesforce recovers — without waiting for the next
+        # conversational entity to trigger a full SOQL query.
+        recovery_task = asyncio.create_task(sf_client.run_recovery_probe())
         try:
             yield
         finally:
             task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
+            recovery_task.cancel()
+            for t in (task, recovery_task):
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     app = FastAPI(title="Meeting Assistant", lifespan=lifespan)
 
@@ -715,39 +743,109 @@ def build_app(config: Config) -> FastAPI:
 
     # ── OAuth 2.0 endpoints ───────────────────────────────────────────────
 
+    @app.post("/salesforce/retry")
+    async def salesforce_retry():
+        """Force an immediate Salesforce liveness probe.
+
+        Reps watching the offline banner during a live meeting can click
+        "Retry now" instead of waiting up to 30s for the next background
+        recovery probe tick. Reuses
+        :meth:`SalesforceMCPClient.probe_once_with_status` so the
+        recovery path (success → ``crm_online`` broadcast, failure →
+        stays offline) is identical to the periodic probe.
+
+        Returns ``{"online": bool, "cached": bool, "age_seconds": float}``
+        so the UI can render immediate per-click feedback. ``cached`` is
+        ``True`` when the call was throttled into the most recent probe
+        by the server-side cooldown — the dashboard surfaces this as a
+        "Just checked Xs ago" hint so a rep mashing the button during
+        an outage can tell their click was registered, even though it
+        didn't open a fresh MCP session.
+        """
+        result = await sf_client.probe_once_with_status()
+        return JSONResponse(
+            {
+                "online": bool(result.online),
+                "cached": bool(result.cached),
+                "age_seconds": float(result.age_seconds),
+            }
+        )
+
     @app.get("/oauth/authorize")
     async def oauth_authorize():
-        """Redirect the browser to the Salesforce login / consent page."""
+        """Redirect the browser to the Salesforce login / consent page.
+
+        Generates a fresh PKCE verifier/challenge pair and CSRF state token,
+        stashes the verifier server-side keyed by state, and redirects the
+        user to Salesforce with the matching ``code_challenge``.
+        """
+        pair = generate_pkce_pair()
+        state = generate_state()
+        _pkce_states[state] = (pair.verifier, time.time())
+        # Opportunistic sweep so the in-memory map can't grow unbounded.
+        _sweep_pkce_states(time.time())
         url = build_authorize_url(
             client_id=config.sf_client_id,
             redirect_uri=config.oauth_redirect_uri,
+            code_challenge=pair.challenge,
+            state=state,
             login_url=config.sf_login_url,
+            scopes=config.sf_mcp_scopes,
         )
         return RedirectResponse(url)
 
     @app.get("/oauth/callback")
     async def oauth_callback(request: Request):
         """Handle Salesforce's redirect after the user authorizes the app."""
+        # Sweep stale state entries before doing anything else.
+        _sweep_pkce_states(time.time())
+
         code = request.query_params.get("code")
+        state = request.query_params.get("state")
         error = request.query_params.get("error")
         if error:
             desc = request.query_params.get("error_description", error)
             logger.error("OAuth callback error: %s", desc)
-            return RedirectResponse(f"/?oauth_error={desc}")
+            if state:
+                _pkce_states.pop(state, None)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Salesforce rejected the sign-in request: {desc}",
+            )
         if not code:
             raise HTTPException(status_code=400, detail="Missing 'code' parameter.")
+        if not state:
+            raise HTTPException(status_code=400, detail="Missing 'state' parameter.")
+
+        # Pop atomically — single-use, even if the user double-clicks.
+        verifier_entry = _pkce_states.pop(state, None)
+        if verifier_entry is None:
+            logger.warning("OAuth callback received unknown or expired state token.")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Sign-in session has expired or already been used. "
+                    "Please restart the Salesforce sign-in from the dashboard."
+                ),
+            )
+        code_verifier, _created_at = verifier_entry
+
         try:
             tokens = await asyncio.to_thread(
                 exchange_code,
                 config.sf_client_id,
-                config.sf_client_secret,
                 config.oauth_redirect_uri,
                 code,
+                code_verifier,
                 config.sf_login_url,
+                config.sf_client_secret,
             )
         except OAuthError as exc:
             logger.error("OAuth code exchange failed: %s", exc)
-            return RedirectResponse(f"/?oauth_error=token_exchange_failed")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to exchange the authorization code with Salesforce: {exc}",
+            )
 
         token_store.save(tokens)
         sf_client.notify_reauthorized()

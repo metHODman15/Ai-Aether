@@ -43,6 +43,13 @@ export const state = {
 
   // CRM availability (graceful degradation)
   crmOnline: true,
+  // Timestamp (ms since epoch) of the last observed Salesforce-online
+  // signal — set whenever a crm_online event is handled OR a crm data
+  // event arrives (proof Salesforce was reachable). Stays null until
+  // the dashboard has actually confirmed connectivity at least once
+  // this session, so the offline banner can hide its "Last connected …"
+  // line when it would otherwise be misleading.
+  crmLastOnlineAt: null,
 
   // Salesforce OAuth authorization status
   sfAuthorized: false,

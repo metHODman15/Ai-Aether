@@ -180,14 +180,20 @@ else
     fi
 
     echo
-    echo -e "${BOLD}── Salesforce OAuth (Connected App) ──────────────────${RESET}"
-    echo "  Create a Connected App in Salesforce Setup → App Manager."
-    echo "  Set the callback URL to: http://localhost:8000/oauth/callback"
-    echo "  (adjust the port if you change PORT below)"
+    echo -e "${BOLD}── Salesforce External Client App + Hosted MCP Server ─${RESET}"
+    echo "  1. In Salesforce Setup → External Client Apps → New External Client App."
+    echo "  2. Enable OAuth, set callback URL: http://localhost:8000/oauth/callback"
+    echo "     (adjust the port to match PORT below if you change it)"
+    echo "  3. Enable PKCE ('Require Proof Key for Code Exchange')."
+    echo "  4. Add scopes: api  refresh_token  offline_access"
+    echo "  5. For a public ECA (recommended): leave the Consumer Secret blank below."
+    echo "     For a confidential ECA: paste the Consumer Secret when prompted."
+    echo "  6. Copy the Hosted Salesforce MCP Server endpoint (Setup → MCP Servers)."
     echo
-    LINE_SF_CLIENT_ID=$(prompt_required "SF_CLIENT_ID"     "Salesforce Connected App Consumer Key")
-    LINE_SF_CLIENT_SECRET=$(prompt_required "SF_CLIENT_SECRET" "Salesforce Connected App Consumer Secret")
-    LINE_SF_LOGIN_URL=$(prompt_optional "SF_LOGIN_URL"     "Salesforce login URL" "https://login.salesforce.com")
+    LINE_SF_CLIENT_ID=$(prompt_required "SF_CLIENT_ID"      "External Client App Consumer Key")
+    LINE_SF_CLIENT_SECRET=$(prompt_optional "SF_CLIENT_SECRET" "Consumer Secret (blank for public ECA)" "")
+    LINE_SF_MCP_SERVER_URL=$(prompt_required "SF_MCP_SERVER_URL" "Salesforce Hosted MCP Server endpoint URL")
+    LINE_SF_LOGIN_URL=$(prompt_optional "SF_LOGIN_URL"      "Salesforce login URL" "https://login.salesforce.com")
     LINE_ENCRYPTION_KEY=$(prompt_encryption_key)
 
     echo
@@ -213,9 +219,12 @@ ${LINE_OPENAI}
 # Transcription backend: "openai" (default) or "local" (faster-whisper, on-device)
 ${LINE_WHISPER_BACKEND}
 
-# Salesforce OAuth 2.0 — Connected App credentials
+# Salesforce OAuth 2.0 — External Client App (ECA) + PKCE
 ${LINE_SF_CLIENT_ID}
+# Public ECAs leave SF_CLIENT_SECRET blank; PKCE proves identity instead.
 ${LINE_SF_CLIENT_SECRET}
+# Salesforce Hosted MCP Server endpoint (Streamable HTTP). Required.
+${LINE_SF_MCP_SERVER_URL}
 # "https://login.salesforce.com" for production orgs, "https://test.salesforce.com" for sandboxes
 ${LINE_SF_LOGIN_URL}
 
