@@ -14,7 +14,10 @@ import {
 } from "./document.js";
 import { startDemo, stopDemo } from "./demo.js";
 import { connect } from "./websocket.js";
-import "./auth.js";
+// Note: auth.js is intentionally NOT imported here — events.js already
+// imports its handlers and routes auth_required / auth_success /
+// auth_status WebSocket events to them. Importing it again from main.js
+// would be dead weight (the module has no top-level side effects).
 
 // History panel
 dom.backToLive.addEventListener("click", backToLive);

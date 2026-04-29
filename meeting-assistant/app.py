@@ -445,6 +445,15 @@ def build_app(config: Config) -> FastAPI:
     # Each /oauth/authorize entry expires after _PKCE_STATE_TTL seconds; the
     # entry is consumed on /oauth/callback. We also sweep the map on every
     # callback so abandoned entries (closed browser tabs etc.) don't leak.
+    #
+    # NOTE: This map lives in the build_app closure — i.e. one copy per
+    # uvicorn worker process. The app is intended to be run as a
+    # single-process local tool (`python app.py` → `uvicorn.run(app, …)`),
+    # so this is fine. If you ever scale out with `--workers N`, OAuth
+    # callbacks will fail intermittently because the /oauth/callback may
+    # land on a different worker than /oauth/authorize. Move PKCE state
+    # to a shared store (Redis, the existing SQLite DB, etc.) before
+    # enabling multiple workers.
     _pkce_states: dict[str, tuple[str, float]] = {}
     _PKCE_STATE_TTL_SECONDS = 600  # 10 minutes — covers typical SSO redirects
 
@@ -498,11 +507,16 @@ def build_app(config: Config) -> FastAPI:
         finally:
             task.cancel()
             recovery_task.cancel()
-            for t in (task, recovery_task):
+            for name, t in (("pipeline_loop", task), ("run_recovery_probe", recovery_task)):
                 try:
                     await t
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError:
                     pass
+                except Exception:
+                    # Distinct logging per task so a crashing recovery
+                    # probe doesn't get silently lumped in with normal
+                    # pipeline shutdown noise.
+                    logger.exception("Background task %s exited with an error", name)
 
     app = FastAPI(title="Meeting Assistant", lifespan=lifespan)
 
@@ -896,7 +910,31 @@ def build_app(config: Config) -> FastAPI:
         await hub.broadcast(auth_payload)
         try:
             while True:
-                await ws.receive_text()
+                raw = await ws.receive_text()
+                # The frontend sends a small set of control messages
+                # (e.g. {"type": "retry_transcription"} from the
+                # transcription-error banner's Retry button). The
+                # transcription pipeline is already self-recovering on
+                # the next captured chunk, so the only thing we need to
+                # do here is acknowledge the dismissal so the client
+                # knows the signal was received and the banner can stay
+                # cleared. We deliberately do NOT re-run the previous
+                # failed chunk: the audio buffer has already moved on
+                # and replaying stale audio would just push misaligned
+                # text into the live transcript.
+                try:
+                    msg = json.loads(raw)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(msg, dict) and msg.get("type") == "retry_transcription":
+                    logger.info(
+                        "Client requested transcription retry; "
+                        "pipeline self-heals on next chunk."
+                    )
+                    await hub.broadcast({
+                        "type": "transcription_retry_ack",
+                        "ts": time.time(),
+                    })
         except WebSocketDisconnect:
             pass
         finally:

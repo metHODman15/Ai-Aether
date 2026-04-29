@@ -166,6 +166,7 @@ if (Test-Path ".env") {
     $lineSfClientSecret   = Prompt-Optional "SF_CLIENT_SECRET"    "Consumer Secret (blank for public ECA)" ""
     $lineSfMcpServerUrl   = Prompt-Required "SF_MCP_SERVER_URL"   "Salesforce Hosted MCP Server endpoint URL"
     $lineSfLoginUrl       = Prompt-Optional "SF_LOGIN_URL"        "Salesforce login URL" "https://login.salesforce.com"
+    $lineSfMcpScopes      = Prompt-Optional "SF_MCP_SCOPES"       "OAuth scopes (add 'mcp' if your org requires it)" "api refresh_token offline_access"
     $lineEncKey           = Prompt-EncryptionKey
 
     Write-Host ""
@@ -199,6 +200,9 @@ $lineSfClientSecret
 $lineSfMcpServerUrl
 # "https://login.salesforce.com" for production orgs, "https://test.salesforce.com" for sandboxes
 $lineSfLoginUrl
+# OAuth scopes requested during the authorize step. The default works for most
+# orgs; some orgs require an extra "mcp" scope to call the Hosted MCP Server.
+$lineSfMcpScopes
 
 # Fernet encryption key for storing OAuth tokens at rest (hex string).
 # Keep this secret — regenerating it will invalidate stored tokens.

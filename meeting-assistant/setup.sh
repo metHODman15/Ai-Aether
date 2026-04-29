@@ -194,6 +194,7 @@ else
     LINE_SF_CLIENT_SECRET=$(prompt_optional "SF_CLIENT_SECRET" "Consumer Secret (blank for public ECA)" "")
     LINE_SF_MCP_SERVER_URL=$(prompt_required "SF_MCP_SERVER_URL" "Salesforce Hosted MCP Server endpoint URL")
     LINE_SF_LOGIN_URL=$(prompt_optional "SF_LOGIN_URL"      "Salesforce login URL" "https://login.salesforce.com")
+    LINE_SF_MCP_SCOPES=$(prompt_optional "SF_MCP_SCOPES"   "OAuth scopes (add 'mcp' if your org requires it)" "api refresh_token offline_access")
     LINE_ENCRYPTION_KEY=$(prompt_encryption_key)
 
     echo
@@ -227,6 +228,9 @@ ${LINE_SF_CLIENT_SECRET}
 ${LINE_SF_MCP_SERVER_URL}
 # "https://login.salesforce.com" for production orgs, "https://test.salesforce.com" for sandboxes
 ${LINE_SF_LOGIN_URL}
+# OAuth scopes requested during the authorize step. The default works for most
+# orgs; some orgs require an extra "mcp" scope to call the Hosted MCP Server.
+${LINE_SF_MCP_SCOPES}
 
 # Fernet encryption key for storing OAuth tokens at rest (hex string).
 # Keep this secret — regenerating it will invalidate stored tokens.

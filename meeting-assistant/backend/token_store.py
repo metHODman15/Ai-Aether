@@ -72,6 +72,13 @@ class TokenStore:
         return conn
 
     def _init_db(self) -> None:
+        # See the matching note in MeetingStore._init_db: this store
+        # shares the SQLite file with MeetingStore but owns only the
+        # `oauth_tokens` table. Each `CREATE TABLE IF NOT EXISTS` is a
+        # no-op once the table exists, so the two stores can both call
+        # _init_db at startup safely. There is no migration framework;
+        # if the encrypted-token schema ever changes, bump it via a
+        # one-shot delete of `meetings.db` (you'll have to re-OAuth).
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
 

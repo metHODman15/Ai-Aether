@@ -10,8 +10,20 @@ everything on a live web dashboard that stays pinned to the current
 topic.
 
 Everything runs locally on your machine. OAuth tokens are encrypted and stored in
-`meetings.db`; no audio or transcript data is sent to a remote server (except to the
-OpenAI or Anthropic APIs as described below).
+`meetings.db`. The data that does leave the machine is limited and goes only to
+named services you've configured:
+
+- **Audio chunks** → OpenAI Whisper API (skipped entirely when `WHISPER_BACKEND=local`).
+- **Transcript snippets + entity-extraction prompts** → the Anthropic API
+  (Claude does topic-shift detection and CRM entity extraction).
+- **Extracted entity values** (customer name, contact name, deal amount, stage
+  keywords, etc.) → your **Salesforce Hosted MCP Server**, embedded inside
+  SOQL queries the backend asks the MCP server to run on your behalf. Raw
+  audio and raw transcript text are never sent to Salesforce.
+- **OAuth credentials** → only Salesforce, during the standard `/oauth/authorize`
+  + `/oauth/callback` flow.
+
+Nothing else is broadcast to a remote server.
 
 ## How topics work
 
@@ -164,6 +176,20 @@ cp .env.example .env
 # edit .env and fill in your keys
 ```
 
+### Dev / test dependencies (optional)
+
+The one-click and manual setups install only the runtime dependencies in
+`requirements.txt`. If you want to run the test suite, lint, or work on the
+code, also install the dev extras:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+`requirements-dev.txt` pins `pytest`, `pytest-asyncio`, `pytest-cov`,
+`python-docx` (used by the document-mode tests), and `playwright` (used by the
+opt-in end-to-end tests — see [Running tests](#running-tests) below).
+
 ### Environment variables
 
 | Variable | Required | Description |
@@ -304,6 +330,27 @@ meeting-assistant/
   exponential backoff (1s → 30s) until the server is reachable again.
   Cached topics, entities, and CRM data stay on screen the entire
   time; nothing is lost across a brief disconnect.
+
+## Running tests
+
+The unit / integration suite runs with `pytest`. End-to-end browser tests under
+`tests/e2e/` are excluded by default (they need a running app + a real browser
+binary) and have to be opted into explicitly.
+
+```bash
+# Install dev deps once
+pip install -r requirements-dev.txt
+
+# Fast unit + integration suite (pytest config skips tests/e2e/ by default)
+pytest
+
+# End-to-end suite — install a browser binary first, then opt in
+playwright install chromium
+pytest tests/e2e/
+```
+
+See `tests/e2e/README.md` for the full run-book (env vars, troubleshooting,
+how the tests boot the app).
 
 ## Operational notes
 
