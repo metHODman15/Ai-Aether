@@ -53,7 +53,3 @@ def set_request_id(rid: str) -> contextvars.Token:
 
 def reset_request_id(token: contextvars.Token) -> None:
     request_id_ctx.reset(token)
-
-
-def current_request_id() -> str:
-    return request_id_ctx.get()

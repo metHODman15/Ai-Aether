@@ -61,6 +61,18 @@ class MeetingStore:
         return conn
 
     def _init_db(self) -> None:
+        # NOTE on schema co-tenancy with TokenStore:
+        # MeetingStore and TokenStore both open connections to the same
+        # SQLite file (`meetings.db`) but own disjoint table sets
+        # (`meetings`, `transcript_lines`, `meeting_entities`,
+        # `meeting_crm` here; `oauth_tokens` in TokenStore). Each store
+        # runs its own `CREATE TABLE IF NOT EXISTS` on init and never
+        # touches the other's tables.
+        # There is no migration framework — the assumption is that this
+        # is a single-user local tool, so we ship breaking schema
+        # changes by deleting `meetings.db` and recreating it. If schema
+        # ever needs to evolve in place, add an Alembic-style migration
+        # runner here before changing column shapes.
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
 

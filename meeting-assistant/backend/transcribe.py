@@ -152,7 +152,48 @@ class LocalWhisperTranscriber(Transcriber):
             "This may take a moment on first run while the model is downloaded.",
             model_size, device, compute_type,
         )
-        self._model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        try:
+            self._model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        except Exception as exc:
+            # The first-run model download needs network access to
+            # Hugging Face. The default `faster_whisper` exception
+            # message is a noisy stack from `huggingface_hub` that buries
+            # the actionable bit, so wrap it in a friendlier RuntimeError
+            # the FastAPI startup handler can show verbatim.
+            msg = str(exc).lower()
+            looks_like_download_failure = any(
+                hint in msg
+                for hint in (
+                    "connection",
+                    "timed out",
+                    "timeout",
+                    "name resolution",
+                    "temporary failure",
+                    "max retries",
+                    "huggingface",
+                    "404",
+                    "not found",
+                    "unauthorized",
+                    "forbidden",
+                )
+            )
+            if looks_like_download_failure:
+                raise RuntimeError(
+                    f"Could not download the local Whisper model '{model_size}'. "
+                    "First-run model setup needs internet access to Hugging Face. "
+                    "Check your connection and that the model name is valid "
+                    "(tiny / base / small / medium / large-v2 / large-v3), then "
+                    "restart the app. If you're offline, switch back to the "
+                    "OpenAI backend by setting WHISPER_BACKEND=openai in .env. "
+                    f"Underlying error: {exc}"
+                ) from exc
+            # Non-download failure (corrupt cache, unsupported compute_type,
+            # missing CUDA, etc.) — re-raise with context but no false
+            # network-troubleshooting advice.
+            raise RuntimeError(
+                f"Failed to load local Whisper model '{model_size}' "
+                f"(device={device}, compute_type={compute_type}): {exc}"
+            ) from exc
         logger.info("Local Whisper model ready.")
 
     # faster-whisper / Whisper models are trained at 16 kHz.

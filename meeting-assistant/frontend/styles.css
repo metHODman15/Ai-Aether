@@ -912,6 +912,25 @@ canvas { max-height: 280px; }
 }
 .demo-banner-btn:active { transform: translateY(0); }
 
+/* Respect users who have asked the OS to minimise non-essential motion
+   (vestibular sensitivities, attention disorders, etc.). The demo
+   banner content is still fully visible — we just skip the slide-in
+   and pulse animations. */
+@media (prefers-reduced-motion: reduce) {
+  .demo-banner {
+    animation: none;
+  }
+  .demo-banner-btn,
+  .demo-banner-btn:hover,
+  .demo-banner-btn:active {
+    transition: none;
+    transform: none;
+  }
+  .status.reconnecting::before {
+    animation: none;
+  }
+}
+
 /* ── Reconnecting badge state ───────────────────────────────────────────── */
 .status.reconnecting {
   background: rgba(250, 204, 21, 0.14);
