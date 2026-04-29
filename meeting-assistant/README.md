@@ -3,8 +3,11 @@
 A local, real-time meeting assistant that listens to your microphone,
 transcribes the conversation with OpenAI Whisper, uses Anthropic Claude
 for **topic-shift detection** and **CRM entity extraction**, queries
-your Salesforce org through the REST API, and visualises everything on
-a live web dashboard that stays pinned to the current topic.
+your Salesforce org through the **Salesforce Hosted MCP Server** (the
+backend connects as an MCP client over Streamable HTTP, authenticated
+with an External Client App + OAuth 2.0 + PKCE), and visualises
+everything on a live web dashboard that stays pinned to the current
+topic.
 
 Everything runs locally on your machine. OAuth tokens are encrypted and stored in
 `meetings.db`; no audio or transcript data is sent to a remote server (except to the
@@ -95,7 +98,8 @@ use an NVIDIA GPU.
 - A working microphone
 - An Anthropic API key (Claude — topic-shift detection and entity extraction)
 - An OpenAI API key (Whisper transcription only — required when `WHISPER_BACKEND=openai`, the default; not needed for the local backend)
-- A Salesforce Connected App (Consumer Key + Consumer Secret)
+- A Salesforce **External Client App** (ECA) with PKCE enabled
+- A Salesforce **Hosted MCP Server** endpoint (Setup → MCP Servers)
 
 On Linux you may need PortAudio system libraries for microphone capture:
 
@@ -166,8 +170,10 @@ cp .env.example .env
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` | yes | Anthropic API key — Claude powers both topic-shift detection and CRM entity extraction |
 | `OPENAI_API_KEY` | openai backend only | OpenAI API key — Whisper transcription only. Required when `WHISPER_BACKEND=openai` (the default). **Not required** when `WHISPER_BACKEND=local` |
-| `SF_CLIENT_ID` | yes | Salesforce Connected App Consumer Key |
-| `SF_CLIENT_SECRET` | yes | Salesforce Connected App Consumer Secret |
+| `SF_CLIENT_ID` | yes | Salesforce **External Client App** Consumer Key |
+| `SF_CLIENT_SECRET` | no | External Client App Consumer Secret. **Leave blank for a public ECA** (recommended) — PKCE proves the client's identity instead. Provide only for confidential ECAs |
+| `SF_MCP_SERVER_URL` | yes | Salesforce **Hosted MCP Server** endpoint (Streamable HTTP). The backend connects here as an MCP client to run all SOQL/CRM queries |
+| `SF_MCP_SCOPES` | no | OAuth scopes requested during the authorize step (default `api refresh_token offline_access`). Adjust if your org requires extra scopes such as `mcp` |
 | `SF_LOGIN_URL` | no | `https://login.salesforce.com` (default) for production orgs, `https://test.salesforce.com` for sandboxes. Also reads legacy `SF_DOMAIN=test` for backwards compatibility |
 | `ENCRYPTION_KEY` | yes | Arbitrary secret used to encrypt OAuth tokens at rest. Generate with `python -c "import secrets; print(secrets.token_hex(32))"`. Changing this value invalidates stored tokens |
 | `HOST` | no | Bind address for the web server (default `127.0.0.1`) |
@@ -180,15 +186,30 @@ cp .env.example .env
 | `LOCAL_WHISPER_COMPUTE_TYPE` | no | Quantisation type for the local backend: `int8` (default, CPU), `float16` (GPU) |
 | `LOG_LEVEL` | no | Logging verbosity: `DEBUG`, `INFO` (default), `WARNING`, `ERROR`. Each log line carries a per-chunk `request_id` to trace one audio chunk end-to-end |
 | `SF_SESSION_TIMEOUT_MINUTES` | no | Salesforce idle timeout in minutes (default `30`). After this much idle time the next CRM query proactively refreshes the OAuth token |
-| `SKIP_STARTUP_VALIDATION` | no | Set to `1` to skip the Anthropic credential ping at startup (default `0`). Salesforce is validated through the OAuth UI flow — not at boot |
+| `SF_MCP_TIMEOUT_SECONDS` | no | Maximum seconds to wait for any single Salesforce Hosted MCP Server request — warm-up, SOQL query, or describe (default `30`). On timeout the dashboard shows a red "Salesforce MCP server timed out" banner and CRM data falls back to empty, so a hung MCP server can never freeze "Connect to Salesforce" |
+| `SKIP_STARTUP_VALIDATION` | no | Set to `1` to skip the Anthropic credential ping at startup (default `0`). Salesforce is validated through the MCP + OAuth UI flow — not at boot |
 
-### Salesforce Connected App setup
+### Salesforce External Client App + Hosted MCP Server setup
 
-1. In Salesforce Setup, go to **App Manager → New Connected App**.
-2. Enable OAuth and add the callback URL: `http://localhost:8000/oauth/callback` (adjust the port if you changed `PORT`).
-3. Add these OAuth scopes: **api**, **refresh_token**, **offline_access**.
-4. Copy the **Consumer Key** → `SF_CLIENT_ID` and **Consumer Secret** → `SF_CLIENT_SECRET` in your `.env`.
-5. Start the app and click **Connect to Salesforce** in the browser to authorize.
+Starting in **V6.0.0**, the backend connects to Salesforce through the
+**Salesforce Hosted MCP Server** as an MCP client. Authentication uses an
+**External Client App (ECA)** with **OAuth 2.0 + PKCE** — no Connected App,
+no client secret required for the recommended public ECA configuration.
+
+1. In Salesforce Setup, go to **External Client Apps → New External Client App**.
+2. Enable **OAuth Settings** and set the callback URL to
+   `http://localhost:8000/oauth/callback` (adjust the port if you changed `PORT`).
+3. Enable **Require Proof Key for Code Exchange (PKCE)** under OAuth Policies.
+4. Add the OAuth scopes: **api**, **refresh_token**, **offline_access**.
+5. **Recommended (public ECA):** disable "Require Secret for Web Server Flow"
+   and leave `SF_CLIENT_SECRET` blank in your `.env`. PKCE proves the client's
+   identity, so a long-lived shared secret is no longer required.
+   *Confidential ECA:* if your security policy requires it, leave the secret
+   requirement enabled and paste the Consumer Secret into `SF_CLIENT_SECRET`.
+6. Copy the **Consumer Key** → `SF_CLIENT_ID` in your `.env`.
+7. In Setup → **MCP Servers**, copy the **Hosted MCP Server endpoint URL** →
+   `SF_MCP_SERVER_URL` in your `.env`.
+8. Start the app and click **Connect to Salesforce** in the browser to authorize.
 
 ## Run
 
@@ -218,7 +239,7 @@ mic → backend/audio.py → backend/transcribe.py     (Whisper)
                        → backend/context.py        (Claude — topic shift?)
                        → backend/entities.py       (Claude Haiku — extract CRM entities)
                        → backend/topic_state.py    (merge into current topic)
-                       → backend/salesforce_client.py (REST API)
+                       → backend/mcp_client.py        (Hosted Salesforce MCP Server, OAuth 2.0 + PKCE)
                        → backend/hub.py → WebSocket → frontend/
 ```
 
@@ -240,7 +261,11 @@ meeting-assistant/
 │   ├── context.py            Anthropic Claude — topic-shift detection
 │   ├── entities.py           Anthropic Claude Haiku — CRM entity extraction
 │   ├── topic_state.py        In-memory current-topic state
-│   ├── salesforce_client.py  Salesforce REST queries + aggregations
+│   ├── mcp_client.py         Salesforce Hosted MCP Server client (SOQL via MCP, OAuth refresh, status callbacks)
+│   ├── salesforce_client.py  Pure helpers: stage distribution, amount timeline, CrmResult shape
+│   ├── pkce.py               PKCE verifier/challenge + OAuth state generation (RFC 7636)
+│   ├── oauth.py              ECA OAuth helpers: authorize URL, code exchange, token refresh
+│   ├── token_store.py        Fernet-encrypted SQLite store for access + refresh tokens
 │   ├── hub.py                WebSocket broadcast hub with per-client backpressure
 │   ├── log_utils.py          Structured logging + per-chunk request_id propagation
 │   └── config.py             Env-var loading + startup credential validation
@@ -295,3 +320,10 @@ meeting-assistant/
   the OAuth UI flow so the meeting can still be transcribed even before
   authorization. Set `SKIP_STARTUP_VALIDATION=1` to bypass the Anthropic
   check (useful for offline development).
+- **MCP request timeouts.** Every Salesforce Hosted MCP Server request —
+  warm-up, SOQL query, describe — is bounded by `SF_MCP_TIMEOUT_SECONDS`
+  (default 30s). If the server hangs or stops responding, the request is
+  cancelled, the dashboard's red Salesforce-offline banner shows
+  "Salesforce MCP server timed out", and the CRM panel renders empty
+  data instead of leaving a spinner running. Tune the timeout up for
+  slow links or down for tighter SLAs.

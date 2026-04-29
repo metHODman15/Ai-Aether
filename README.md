@@ -9,7 +9,7 @@ Ai-Aether listens to your microphone during a sales call and automatically:
 1. **Transcribes** audio in near-real-time using OpenAI Whisper (default) or an on-device model.
 2. **Detects topic shifts** — Claude reads each transcript chunk and decides whether the conversation has moved to a new customer, deal, or subject.
 3. **Extracts CRM entities** — Claude (Haiku) pulls out customer name, contact, deal amount, stage, and keywords from every chunk.
-4. **Queries Salesforce** — matching Accounts and Opportunities are fetched via the REST API using OAuth 2.0.
+4. **Queries Salesforce** — matching Accounts and Opportunities are fetched via the **Salesforce Hosted MCP Server** using an External Client App and OAuth 2.0 with PKCE; the backend acts as an MCP client over Streamable HTTP.
 5. **Updates a live dashboard** — all panels (transcript, entities, charts, Salesforce records) stay pinned to the current topic and refresh automatically.
 
 ## Quick start
@@ -28,6 +28,8 @@ python app.py
 ```
 
 Open <http://127.0.0.1:8000> and click **Connect to Salesforce** to authorise.
+
+See [`meeting-assistant/README.md`](meeting-assistant/README.md) for the full setup walkthrough — including how to register a Salesforce External Client App, find your Hosted MCP Server URL, and configure the required environment variables.
 
 ## Required credentials
 

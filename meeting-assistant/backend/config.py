@@ -33,14 +33,23 @@ def _bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+# Default OAuth scopes requested when authorising the External Client App.
+# ``api`` for SOQL/MCP tool calls; ``refresh_token`` + ``offline_access``
+# so we can refresh access tokens without bouncing through the browser.
+_DEFAULT_SF_MCP_SCOPES = "api refresh_token offline_access"
+
+
 @dataclass(frozen=True)
 class Config:
     openai_api_key: str
     anthropic_api_key: str
-    # Salesforce OAuth 2.0 (Connected App credentials)
+    # Salesforce OAuth 2.0 (External Client App credentials)
     sf_client_id: str
-    sf_client_secret: str
-    sf_login_url: str          # e.g. https://login.salesforce.com or https://test.salesforce.com
+    sf_client_secret: str          # may be empty for public ECAs
+    sf_login_url: str              # e.g. https://login.salesforce.com or https://test.salesforce.com
+    # Salesforce Hosted MCP Server (Streamable HTTP endpoint).
+    sf_mcp_server_url: str
+    sf_mcp_scopes: str
     # Encryption key for token storage
     encryption_key: str
     host: str
@@ -53,6 +62,7 @@ class Config:
     local_whisper_compute_type: str
     log_level: str
     sf_session_timeout_minutes: int
+    sf_mcp_timeout_seconds: float
     skip_startup_validation: bool
 
     @classmethod
@@ -81,6 +91,16 @@ class Config:
                 "SF_SESSION_TIMEOUT_MINUTES must be a positive integer."
             )
 
+        try:
+            sf_mcp_timeout = float(_optional("SF_MCP_TIMEOUT_SECONDS", "30"))
+            if sf_mcp_timeout <= 0:
+                raise ValueError
+        except ValueError:
+            raise ConfigError(
+                "SF_MCP_TIMEOUT_SECONDS must be a positive number "
+                "(seconds to wait for any single MCP request)."
+            )
+
         # Determine login URL: SF_LOGIN_URL takes priority. Falls back to
         # SF_DOMAIN for backward compatibility.
         #
@@ -99,12 +119,24 @@ class Config:
             else:
                 sf_login_url = f"https://{sf_domain}.salesforce.com"
 
+        skip_startup_validation = _bool("SKIP_STARTUP_VALIDATION", False)
+
+        # SF_MCP_SERVER_URL is required unless explicitly skipping startup
+        # validation (useful for offline development / unit-test envs).
+        if skip_startup_validation:
+            sf_mcp_server_url = _optional("SF_MCP_SERVER_URL", "")
+        else:
+            sf_mcp_server_url = _require("SF_MCP_SERVER_URL")
+
         return cls(
             openai_api_key=openai_api_key,
             anthropic_api_key=_require("ANTHROPIC_API_KEY"),
             sf_client_id=_require("SF_CLIENT_ID"),
-            sf_client_secret=_require("SF_CLIENT_SECRET"),
+            # Public ECAs do not have a client secret — default to "".
+            sf_client_secret=_optional("SF_CLIENT_SECRET", ""),
             sf_login_url=sf_login_url,
+            sf_mcp_server_url=sf_mcp_server_url,
+            sf_mcp_scopes=_optional("SF_MCP_SCOPES", _DEFAULT_SF_MCP_SCOPES),
             encryption_key=_require("ENCRYPTION_KEY"),
             host=_optional("HOST", "127.0.0.1"),
             port=int(_optional("PORT", "8000")),
@@ -116,12 +148,13 @@ class Config:
             local_whisper_compute_type=_optional("LOCAL_WHISPER_COMPUTE_TYPE", "int8"),
             log_level=_optional("LOG_LEVEL", "INFO").upper(),
             sf_session_timeout_minutes=sf_session_timeout,
-            skip_startup_validation=_bool("SKIP_STARTUP_VALIDATION", False),
+            sf_mcp_timeout_seconds=sf_mcp_timeout,
+            skip_startup_validation=skip_startup_validation,
         )
 
     @property
     def oauth_redirect_uri(self) -> str:
-        """The OAuth callback URL. Must match the Connected App exactly."""
+        """The OAuth callback URL. Must match the External Client App exactly."""
         return f"http://{self.host}:{self.port}/oauth/callback"
 
 
@@ -131,7 +164,7 @@ def validate_credentials(config: Config) -> dict[str, str]:
     Returns a dict of ``{component: status_message}``.  Raises
     :class:`ConfigError` if a *fatal* problem is detected (currently:
     Anthropic auth failure only — Salesforce validation happens through
-    the OAuth UI flow, not at startup).
+    the MCP + OAuth UI flow, not at startup).
 
     Skipped entirely when ``SKIP_STARTUP_VALIDATION=1`` is set.
     """
@@ -141,7 +174,7 @@ def validate_credentials(config: Config) -> dict[str, str]:
         logger.info(
             "SKIP_STARTUP_VALIDATION=1 set; skipping credential live checks."
         )
-        return {"anthropic": "skipped", "salesforce": "oauth_flow"}
+        return {"anthropic": "skipped", "salesforce": "mcp_oauth_flow"}
 
     # ── Anthropic ─────────────────────────────────────────────────────────
     try:
@@ -167,7 +200,7 @@ def validate_credentials(config: Config) -> dict[str, str]:
         logger.warning("Anthropic validation error: %s", exc)
         results["anthropic"] = f"degraded: {exc}"
 
-    # Salesforce is validated implicitly through the OAuth UI flow.
-    results["salesforce"] = "oauth_flow"
+    # Salesforce is validated implicitly through the MCP + OAuth UI flow.
+    results["salesforce"] = "mcp_oauth_flow"
 
     return results
